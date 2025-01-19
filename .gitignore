@@ -1,0 +1,5 @@
+/cmake-build-debug
+/old_files
+kakuro.exe
+kakurotest.exe
+kakuro_main.o
