@@ -1,10 +1,10 @@
 #include <iostream>
 #include <vector>
 #include <string>
-#include <chrono>
 #include "KakuroSolver.cpp"
 #include "KakuroGenerator.cpp"
 
+/*
 void solveExampleKakuro() {
     KakuroSolver solver(5);
 
@@ -50,6 +50,8 @@ void solveExampleKakuro() {
     }
 
 }
+*/
+
 
 void solveCreatedKakuroCheck(std::string &filename, std::string &solutionFilename) {
     auto solver = KakuroSolver::readFromFile(filename);
@@ -58,117 +60,58 @@ void solveCreatedKakuroCheck(std::string &filename, std::string &solutionFilenam
     solver.printInitialBoard();
 
     std::vector<std::vector<Cell>> solution;
-    bool hasUniqueSolution = solver.solveBoard(solution);
+    SolveResult hasUniqueSolution = solver.solveBoard(solution);
 
-    if (hasUniqueSolution) {
+    if (hasUniqueSolution == SolveResult::UNIQUE_SOLUTION) {
         std::cout << "\nUnique solution found!\n";
-        solver.writeToFile(solutionFilename, solution);
+        //solver.writeToFile(solutionFilename, solution);
+    } else if (hasUniqueSolution == SolveResult::MULTIPLE_SOLUTIONS) {
+        std::cout << "\nMultiple solutions exist.\n";
     } else {
-        std::cout << "\nNo unique solution exists.\n";
+        std::cout << "\nNo solution exists.\n";
     }
 
-}
-
-
-void generateBoardMap() {
-    std::cout << "Starting Kakuro board map generation...\n\n";
-    int run = 5;
-
-    // For each size from 5x5 to 20x20
-    for (int size = 6; size <= 20; ++size) {
-        std::string filename = std::to_string(run) + "_board_" + std::to_string(size) + "x" +
-                               std::to_string(size) + ".kakuro";
-
-        std::string filename_solution = std::to_string(run) + "_board_" + std::to_string(size) + "x" +
-                                        std::to_string(size) + "solution.kakuro";
-
-        std::cout << "Generating " << size << "x" << size << " board...\n";
-
-        // Adjust population size based on board size
-        int populationSize = 50 + (size - 5) * 10;  // Larger populations for bigger boards
-        KakuroGenerator generator(size, populationSize);
-
-        auto start = std::chrono::high_resolution_clock::now();
-        // Generate board with increased time limit for larger boards
-        //auto timeLimit = std::chrono::seconds(300 + (size - 5) * 60);  // 5 mins + 1 min per size above 5
-        auto board = generator.generateBoard();
-
-        std::cout << "Created board with " << size << "x" << size << std::endl;
-        auto end = std::chrono::high_resolution_clock::now();
-
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        std::cout << "Time taken: " << duration.count() << " ms\n";
-
-
-        generator.writeToFile(filename, board);
-
-        // Create solver to verify the board
-        KakuroSolver solver(size);
-        for (int i = 0; i < size; i++) {
-            for (int j = 0; j < size; j++) {
-                solver.setCell(i, j, board[i][j].isBlack,
-                               board[i][j].downClue, board[i][j].rightClue);
-            }
-        }
-
-        // Verify and save board
-        std::vector<std::vector<Cell>> solution;
-
-
-        start = std::chrono::high_resolution_clock::now();
-        bool isValid = solver.solveBoard(solution);
-
-        end = std::chrono::high_resolution_clock::now();
-
-        duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        std::cout << "Time taken: " << duration.count() << " ms\n";
-
-        if (isValid) {
-            solver.writeToFile(filename_solution, solution);
-            std::cout << "Successfully generated and saved " << filename_solution << "\n\n";
-        } else {
-            std::cerr << "Failed to generate valid " << size << "x" << size
-                      << " board. \n";
-
-        }
-    }
-
-    std::cout << "Board map generation completed!\n";
 }
 
 
 int main() {
-    std::cout << "Check - 1 or run algo - 0 ";
-    int check = 0;
-    //std::cin >> check;
+    std::string file = "old_files/initial_test_6x6.ka";
+    std::string second = "old_files/board_5x5.kakuro";
 
-    if (check == 1) {
-        auto start = std::chrono::high_resolution_clock::now();
-        solveExampleKakuro();
-        auto end = std::chrono::high_resolution_clock::now();
+    solveCreatedKakuroCheck(file, file);
+    solveCreatedKakuroCheck(second, file);
 
+    int run = 2;
+    SolveResult result = SolveResult::NO_SOLUTION;
 
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        std::cout << "Time taken: " << duration.count() << " ms\n";
+    for (int size = 5; size <= 20; ++size) {
 
-        start = std::chrono::high_resolution_clock::now();
-        std::string filename = "1_board_5x5.kakuro";
-        std::string filenameSolution = "1_board_5x5solution.kakuro";
-        std::string filenameWrong = "wrong_board.txt";
-        std::string filenameWrongSol = "wrong_board_solution.txt";
+        KakuroBoard boardTest(size, size);
+        boardTest.generateBoard();
+        std::cout << "Starting generating board size " << std::to_string(size) << std::endl;
+        do {
+            KakuroGenerator generator(size);
+            auto board = generator.generateBoard();
 
+            std::cout  << "Finished generating, try result" << std::endl;
 
-
-        solveCreatedKakuroCheck(filename, filenameSolution);
-        solveCreatedKakuroCheck(filenameWrong, filenameWrongSol);
-        end = std::chrono::high_resolution_clock::now();
-
-        duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        std::cout << "Time taken: " << duration.count() << " ms\n";
-
-
-    } else {
-        generateBoardMap();
+            KakuroSolver solver(size);
+            for (int i = 0; i < size; i++) {
+                for (int j = 0; j < size; j++) {
+                    solver.setCell(i, j, board[i][j].isBlack,
+                                   board[i][j].downClue, board[i][j].rightClue);
+                }
+            }
+            std::vector <std::vector<Cell>> solution;
+            result = solver.solveBoard(solution);
+            if (result == SolveResult::UNIQUE_SOLUTION) {
+                std::string fileName = std::to_string(run)+"_board_" + std::to_string(size) +"x"+std::to_string(size)+".kakuro";
+                std::string fileNameSol = std::to_string(run)+"_board_" + std::to_string(size) +"x"+std::to_string(size)+"_solution.kakuro";
+                solver.writeToFile(fileName, board);
+                solver.writeToFile(fileNameSol, solution);
+            }
+        } while (result != SolveResult::UNIQUE_SOLUTION);
+        std::cout << "Finished generating board size " << std::to_string(size) << std::endl;
     }
 
     return 0;

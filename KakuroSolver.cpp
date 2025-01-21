@@ -5,11 +5,9 @@
 #include "KakuroSolver.h"
 
 void KakuroSolver::precomputeSumCombinations() {
-    //std::cout << "\nPrecomputing sum combinations...\n";
-
-    // Quick lookup arrays for min/max possible sums
-    std::vector<int> minSum(10, 0);  // minSum[length] = minimum possible sum for that length
-    std::vector<int> maxSum(10, 0);  // maxSum[length] = maximum possible sum for that length
+    // Initialize min/max sums for quick lookup
+    std::vector<int> minSum(10, 0);
+    std::vector<int> maxSum(10, 0);
 
     for (int len = 1; len <= 9; len++) {
         // Minimum sum: 1+2+3+...+len
@@ -18,26 +16,21 @@ void KakuroSolver::precomputeSumCombinations() {
         maxSum[len] = (len * (19 - len)) / 2;
     }
 
+    // Generate all valid combinations for each sum and length
     for (int length = 1; length <= 9; ++length) {
         for (int sum = minSum[length]; sum <= maxSum[length]; ++sum) {
             generateOptimizedCombinations(sum, length, sumCombinations[sum * 100 + length]);
         }
     }
-
-    // Print statistics
-    /*for (const auto& [key, combinations] : sumCombinations) {
-        int sum = key / 100;
-        int length = key % 100;
-        std::cout << "Sum " << sum << " Length " << length << ": "
-                  << combinations.size() << " combinations\n";
-    }*/
 }
+
 
 void KakuroSolver::generateOptimizedCombinations(int targetSum, int length, std::vector<std::vector<int>> &result) {
     std::vector<int> current(length);
     std::vector<bool> used(10, false);  // Numbers 1-9
 
     // Helper function to generate permutations
+
     std::function<void(int, int)> generatePermutations = [&](int pos, int remainingSum) {
         if (pos == length) {
             if (remainingSum == 0) {
@@ -88,7 +81,6 @@ void KakuroSolver::printBoard() const {
     std::cout << "\n";
 }
 
-
 bool KakuroSolver::isValidInRun(const Run &run, const std::vector<int> &values) {
     std::set<int> used;
     int currentSum = 0;
@@ -107,29 +99,60 @@ bool KakuroSolver::isValidInRun(const Run &run, const std::vector<int> &values) 
     return currentSum == run.sum;
 }
 
-std::vector<std::vector<int>> KakuroSolver::getPossibleValues(const Run &run) {
+std::vector<std::vector<int>> KakuroSolver::getPossibleValues(const Run& run) {
     int key = run.sum * 100 + run.length;
-    auto &combinations = sumCombinations[key];
+    auto& combinations = sumCombinations[key];
     std::vector<std::vector<int>> validCombinations;
 
-    for (const auto &comb: combinations) {
-        if (isValidInRun(run, comb)) {
+    // Filter combinations based on existing values in the run
+    for (const auto& comb : combinations) {
+        bool isValid = true;
+        size_t valueIndex = 0;
+        std::set<int> usedInRun;
+
+        for (const auto& [x, y] : run.cells) {
+            if (!board[x][y].isBlack && valueIndex < comb.size()) {
+                int value = comb[valueIndex++];
+                if (board[x][y].value != 0 && board[x][y].value != value) {
+                    isValid = false;
+                    break;
+                }
+                if (usedInRun.count(value)) {
+                    isValid = false;
+                    break;
+                }
+                usedInRun.insert(value);
+            }
+        }
+
+        if (isValid) {
             validCombinations.push_back(comb);
         }
     }
+
     return validCombinations;
 }
+
+void KakuroSolver::debugPrintRun(const Run &run) const {
+    std::cout << "Run: direction: " << (run.isHorizontal ? "horizontal " : "vertical ") << "sum=" << run.sum
+              << ", length=" << run.length << ", cells: ";
+    for (const auto &[x, y]: run.cells) {
+        std::cout << "(" << x << "," << y << ") ";
+    }
+    std::cout << "\n";
+}
+
+void KakuroSolver::debugPrintAllRuns() const {
+    std::cout << "Total runs: " << runs.size() << "\n";
+    for (const auto &run: runs) {
+        debugPrintRun(run);
+    }
+}
+
 
 void KakuroSolver::identifyRuns() {
     runs.clear();
     //std::cout << "\nIdentifying runs...\n";
-
-    // First verify basic board structure
-    /* for (int i = 0; i < size; i++) {
-         if (!board[i][0].isBlack || !board[0][i].isBlack) {
-             throw std::runtime_error("First row and column must be black cells");
-         }
-     }*/
 
     // Identify horizontal runs
     for (int i = 0; i < size; ++i) {
@@ -143,6 +166,7 @@ void KakuroSolver::identifyRuns() {
                     k++;
                 }
                 run.length = run.cells.size();
+                run.isHorizontal = true;
                 if (run.length > 0) {
                     runs.push_back(run);
                     /*std::cout << "Found horizontal run at (" << i << "," << j
@@ -169,6 +193,7 @@ void KakuroSolver::identifyRuns() {
                     k++;
                 }
                 run.length = run.cells.size();
+                run.isHorizontal = false;
                 if (run.length > 0) {
                     runs.push_back(run);
                     /*std::cout << "Found vertical run at (" << i << "," << j
@@ -182,16 +207,13 @@ void KakuroSolver::identifyRuns() {
             }
         }
     }
-
-    //std::cout << "Total runs found: " << runs.size() << "\n";
-    std::cout << "Current size: " << size << "\n";
-
 }
 
 bool KakuroSolver::isValidBoard() const {
     // Track which cells belong to runs
-    std::vector<std::vector<bool>> cellInRun(size, std::vector<bool>(size, false));
-
+    std::vector<std::vector<std::pair<bool, bool>>> cellInRun(size,
+                                                              std::vector<std::pair<bool, bool>>(size, {false,
+                                                                                                        false}));  // {horizontal, vertical}
     // check if the board is full of black fields
     bool notBlack = false;
     for (int i = 0; i < size; ++i) {
@@ -204,58 +226,64 @@ bool KakuroSolver::isValidBoard() const {
     }
     if (!notBlack) return false;
 
-
-    // Identify all runs in the board
+    // Check each white cell has both horizontal and vertical clues
     for (int i = 0; i < size; i++) {
         for (int j = 0; j < size; j++) {
-            if (board[i][j].isBlack) {
+            if (!board[i][j].isBlack) {
+                bool hasHorizontalClue = false;
+                bool hasVerticalClue = false;
 
-                // Check right clue
-                if (board[i][j].rightClue > 0) {
-
-                    //Check cell to the right if this is a clue
-                    if (j + 1 >= size || board[i][j + 1].isBlack) {
-                        /*std::cout << "Invalid right clue at (" << i << "," << j
-                                  << "): black cell, board edge or clue immediately after" << std::endl;*/
-                        //printBoard();
-                        return false;
-                    }
-
-                    int k = j + 1;
-                    while (k < size && !board[i][k].isBlack) {
-                        cellInRun[i][k] = true;
-                        k++;
+                // Check horizontal clue
+                for (int k = j - 1; k >= 0; k--) {
+                    if (board[i][k].isBlack) {
+                        hasHorizontalClue = (board[i][k].rightClue > 0);
+                        break;
                     }
                 }
 
-                // Check down clue
-                if (board[i][j].downClue > 0) {
-
-                    //Check cell underneath if this is a clue
-                    if (i + 1 >= size || board[i + 1][j].isBlack) {
-                        /*std::cout << "Invalid down clue at (" << i << "," << j
-                                  << "): black cell, board edge or clue immediately below" << std::endl;*/
-                        //printBoard();
-                        return false;
+                // Check vertical clue
+                for (int k = i - 1; k >= 0; k--) {
+                    if (board[k][j].isBlack) {
+                        hasVerticalClue = (board[k][j].downClue > 0);
+                        break;
                     }
+                }
 
-                    int k = i + 1;
-                    while (k < size && !board[k][j].isBlack) {
-                        cellInRun[k][j] = true;
-                        k++;
-                    }
+                if (!hasHorizontalClue || !hasVerticalClue) {
+                    /*std::cout << "Cell at (" << i << "," << j
+                              << ") missing clue(s). Horizontal: " << hasHorizontalClue
+                              << ", Vertical: " << hasVerticalClue << std::endl;*/
+                    return false;
                 }
             }
         }
     }
+    // Track runs and verify cell participation
+    for (const auto &run: runs) {
+        for (const auto &[x, y]: run.cells) {
+            // Determine if this is a horizontal or vertical run
+            bool isHorizontal = true;
+            if (run.cells.size() > 1) {
+                isHorizontal = (run.cells[0].first == run.cells[1].first);
+            }
 
-    // Verify all white cells belong to at least one run
+            if (isHorizontal) {
+                cellInRun[x][y].first = true;
+            } else {
+                cellInRun[x][y].second = true;
+            }
+        }
+    }
+
+    // Verify all white cells participate in both directions
     for (int i = 0; i < size; i++) {
         for (int j = 0; j < size; j++) {
-            if (!board[i][j].isBlack && !cellInRun[i][j]) {
-                std::cout << "Cell at (" << i << "," << j
-                          << ") is not part of any run" << std::endl;
-                return false;
+            if (!board[i][j].isBlack) {
+                if (!cellInRun[i][j].first || !cellInRun[i][j].second) {
+                    /*std::cout << "Cell at (" << i << "," << j
+                              << ") not part of both horizontal and vertical runs" << std::endl;*/
+                    return false;
+                }
             }
         }
     }
@@ -268,31 +296,67 @@ bool KakuroSolver::isSolutionComplete() const {
     for (int i = 0; i < size; i++) {
         for (int j = 0; j < size; j++) {
             if (!board[i][j].isBlack && board[i][j].value == 0) {
-                std::cout << "Unfilled cell at (" << i << "," << j << ")" << std::endl;
+                /*std::cout << "Unfilled cell at (" << i << "," << j << ")" << std::endl;*/
                 return false;
             }
         }
     }
+    for (const auto &run: runs) {
+        int sum = 0;
+        std::set<int> used;
+        for (const auto &[x, y]: run.cells) {
+            if (!board[x][y].isBlack) {
+                int value = board[x][y].value;
+                if (value < 1 || value > 9 || used.count(value)) {
+                    return false;
+                }
+                used.insert(value);
+                sum += value;
+            }
+        }
+        if (sum != run.sum) {
+            return false;
+        }
+    }
+
     return true;
 }
 
-SolveResult KakuroSolver::solve(int runIndex, std::vector<std::vector<Cell>> &solution) {
-    combinationsTried++;
-    if (combinationsTried % 200000 == 0) {
-        std::cout << "Progress: tried " << combinationsTried << " combinations\n";
-        //printBoard();
+bool KakuroSolver::isValuePossibleAtPosition(int x, int y, int value) {
+    // Check row constraints
+    for (int j = 0; j < size; j++) {
+        if (j != y && !board[x][j].isBlack && board[x][j].value == value) {
+            return false;
+        }
     }
 
+    // Check column constraints
+    for (int i = 0; i < size; i++) {
+        if (i != x && !board[i][y].isBlack && board[i][y].value == value) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+
+SolveResult KakuroSolver::solve(int runIndex, std::vector<std::vector<Cell>> &solution) {
     // First validate the board structure before attempting to solve
     if (runIndex == 0 && !isValidBoard()) {
         //std::cout << "Invalid board structure detected\n";
         return SolveResult::NO_SOLUTION;
     }
 
+    if (!isValidRunLengths()) {
+        //std::cout << " runs not valid in length" << std::endl;
+        return SolveResult::NO_SOLUTION;
+    }
+
     if (runIndex == runs.size()) {
         // Check if all cells are filled and the solution is valid
         if (!isSolutionComplete()) {
-            std::cout << "Solution incomplete - not all cells filled\n";
+            //std::cout << "Solution incomplete/unverified - not all cells filled\n";
             return SolveResult::NO_SOLUTION;
         }
 
@@ -304,12 +368,15 @@ SolveResult KakuroSolver::solve(int runIndex, std::vector<std::vector<Cell>> &so
                     sum += board[x][y].value;
                 }
             }
-            if (sum != run.sum) return SolveResult::NO_SOLUTION;
+            if (sum != run.sum) {
+                //std::cout << "Run sum and sum problem" << std::endl;
+                return SolveResult::NO_SOLUTION;
+            }
         }
 
         solutionCount++;
-        std::cout << "\nFound solution #" << solutionCount << ":\n";
-        printBoard();
+        //std::cout << "\nFound solution #" << solutionCount << ":\n";
+        //printBoard();
 
         if (solutionCount == 1) {
             solution = board;
@@ -320,6 +387,21 @@ SolveResult KakuroSolver::solve(int runIndex, std::vector<std::vector<Cell>> &so
 
     const Run &run = runs[runIndex];
     auto possibleValues = getPossibleValues(run);
+
+    // Sort combinations by how many cells they can fill immediately
+    std::sort(possibleValues.begin(), possibleValues.end(),
+              [this, &run](const std::vector<int>& a, const std::vector<int>& b) {
+                  int scoreA = 0, scoreB = 0;
+                  for (size_t i = 0; i < run.cells.size(); i++) {
+                      const auto& [x, y] = run.cells[i];
+                      if (board[x][y].value == 0) {
+                          if (isValuePossibleAtPosition(x, y, a[i])) scoreA++;
+                          if (isValuePossibleAtPosition(x, y, b[i])) scoreB++;
+                      }
+                  }
+                  return scoreA > scoreB;
+              });
+
 
     for (const auto &values: possibleValues) {
         bool isValid = true;
@@ -337,20 +419,6 @@ SolveResult KakuroSolver::solve(int runIndex, std::vector<std::vector<Cell>> &so
                     isValid = false;
                     break;
                 }
-
-                // Check row and column conflicts
-                for (int k = 0; k < size; k++) {
-                    if (k != y && !board[x][k].isBlack && board[x][k].value == value) {
-                        isValid = false;
-                        break;
-                    }
-                    if (k != x && !board[k][y].isBlack && board[k][y].value == value) {
-                        isValid = false;
-                        break;
-                    }
-                }
-
-                if (!isValid) break;
 
                 if (board[x][y].value == 0) {
                     board[x][y].value = value;
@@ -376,7 +444,33 @@ SolveResult KakuroSolver::solve(int runIndex, std::vector<std::vector<Cell>> &so
         }
     }
 
-    return solutionCount == 1 ? SolveResult::UNIQUE_SOLUTION : SolveResult::NO_SOLUTION;
+    if (solutionCount == 1) {
+        return SolveResult::UNIQUE_SOLUTION;
+    } else if (solutionCount > 1) {
+        return SolveResult::MULTIPLE_SOLUTIONS;
+    } else {
+        //std::cout << "no result at end " << solutionCount << std::endl;
+        //printBoard();
+        return SolveResult::NO_SOLUTION;
+    }
+}
+
+bool KakuroSolver::isValidRunLengths() const {
+    for (const Run &run: runs) {
+        // Count non-black cells in the run
+        int whiteCells = 0;
+        for (const auto &[x, y]: run.cells) {
+            if (!board[x][y].isBlack) {
+                whiteCells++;
+            }
+        }
+
+        // Each run must have at least 2 white cells
+        if (whiteCells < 2) {
+            return false;
+        }
+    }
+    return true;
 }
 
 KakuroSolver::KakuroSolver(int boardSize) : size(boardSize) {
@@ -427,55 +521,36 @@ void KakuroSolver::writeToFile(const std::string &filename, std::vector<std::vec
 
 void KakuroSolver::setCell(int x, int y, bool isBlack, int downClue, int rightClue) {
     if (x >= 0 && x < size && y >= 0 && y < size) {  // Bounds check
-        board[x][y].isBlack = isBlack;
+        board[x][y] = Cell(isBlack);
         board[x][y].downClue = downClue;
         board[x][y].rightClue = rightClue;
         board[x][y].value = 0;
     }
 }
 
-bool KakuroSolver::solveBoard(std::vector<std::vector<Cell>> &solution) {
+Cell KakuroSolver::getCell(int x, int y) {
+    return board[x][y];
+}
+
+SolveResult KakuroSolver::solveBoard(std::vector<std::vector<Cell>> &solution) {
     identifyRuns();
+    //debugPrintAllRuns();
 
     // Sort runs by constraint level (fewer possibilities first)
     std::sort(runs.begin(), runs.end(), [this](const Run &a, const Run &b) {
         return getPossibleValues(a).size() < getPossibleValues(b).size();
     });
 
-    /*std::cout << "\nRuns sorted by constraint level:\n";
-    for (const auto& run : runs) {
-        std::cout << "Run sum=" << run.sum << " length=" << run.length
-                  << " possibilities=" << getPossibleValues(run).size() << "\n";
-    }*/
-
     solutionCount = 0;
     backtrackCount = 0;
-    combinationsTried = 0;
 
     auto result = solve(0, solution);
 
-    switch (result) {
-        case SolveResult::NO_SOLUTION:
-            //std::cout << "No solution exists\n";
-            break;
-        case SolveResult::UNIQUE_SOLUTION:
-            //std::cout << "Found unique solution!\n";
-            // solution vector contains the unique solution
-            break;
-        case SolveResult::MULTIPLE_SOLUTIONS:
-            //std::cout << "Puzzle has multiple solutions - not valid!\n";
-            break;
-    }
-
-    std::cout //<< "\nSolving completed:\n"
-            << "Solutions found: " << solutionCount << "\n" << std::endl;
-    //<< "Combinations tried: " << combinationsTried << "\n"
-    //<< "Backtracks: " << backtrackCount << "\n";
-
-    return result == SolveResult::UNIQUE_SOLUTION;
+    return result;
 }
 
 void KakuroSolver::printInitialBoard() const {
     std::cout << "\nInitial board configuration:\n";
     printBoard();
 }
+

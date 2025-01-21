@@ -1,84 +1,87 @@
-//
-// Created by Theresa on 19.01.2025.
-//
+#ifndef KAKUROGENERATOR_H
+#define KAKUROGENERATOR_H
 
-#ifndef PART2_KAKUROGENERATOR_H
-#define PART2_KAKUROGENERATOR_H
-
-#include <iostream>
 #include <vector>
-#include <unordered_map>
-#include <set>
-#include <algorithm>
-#include <iomanip>
-#include <string>
-#include <functional>
-#include <chrono>
-#include <fstream>
 #include <random>
+#include <algorithm>
+#include <chrono>
 #include "KakuroSolver.h"
 
+// Forward declarations
+class KakuroBoard;
+class KakuroGenerator;
+
+class KakuroBoard {
+private:
+    int rows;
+    int cols;
+    const int minRunLength = 2;
+    std::random_device rd;
+    std::mt19937 gen;
+    std::uniform_real_distribution<> dis;
+    std::uniform_int_distribution<> numDis;
+
+    void placeWhiteCells();
+    bool validateAndFixRuns();
+    bool validateBoard();
+    void placeClues();
+    std::pair<int, int> calculateRightRun(int row, int col);
+    std::pair<int, int> calculateDownRun(int row, int col);
+
+public:
+    std::vector<std::vector<Cell>> board;
+
+    KakuroBoard(int r, int c);
+    bool generateBoard();
+    void printBoard() const;
+};
 
 class KakuroGenerator {
 private:
-    int size;
-    int populationSize;
-    int generations;
-    double mutationRate;
-    double crossoverRate;
-    std::mt19937 rng;
-
     struct Individual {
         std::vector<std::vector<Cell>> board;
         double fitness;
 
-        Individual(int size) : board(size, std::vector<Cell>(size)), fitness(0.0) {}
+        Individual(int size);
     };
 
-    // Helper function to generate a random board layout
-    std::vector<std::vector<Cell>> generateRandomBoard();
+    struct Run {
+        int startX, startY;
+        int length;
+        bool horizontal;
 
-    // Generate a valid clue for a given run length
-    int generateValidClue(int length);
+        Run(int x, int y, int l, bool h);
+    };
 
-    // Calculate fitness of a board
-    double calculateFitness(const std::vector<std::vector<Cell>> &board, int &generation);
+    const int size;
+    const int populationSize;
+    const double mutationRate;
+    const double targetFitness;
+    std::mt19937 rng;
 
-    // Evaluate connectivity of white cells
-    double evaluateConnectivity(const std::vector<std::vector<Cell>> &board);
+    // Constants for fitness calculation
+    const double WEIGHT_SOLVABILITY = 0.4;
+    const double WEIGHT_UNIQUENESS = 0.3;
+    const double WEIGHT_COMPLEXITY = 0.2;
+    const double WEIGHT_BALANCE = 0.1;
 
-    // DFS helper for connectivity check
-    void dfs(const std::vector<std::vector<Cell>> &board,
-             std::vector<std::vector<bool>> &visited, int i, int j);
-
-    // Evaluate distribution of clues
-    double evaluateClueDistribution(const std::vector<std::vector<Cell>> &board);
-
-    // Check if a clue is valid for a given length
-    bool isValidClue(int sum, int length);
-
-    // Crossover two boards to create a new one
-    std::vector<std::vector<Cell>> crossover(const std::vector<std::vector<Cell>> &parent1,
-                                             const std::vector<std::vector<Cell>> &parent2);
-
-    // Mutate a board
-    void mutate(std::vector<std::vector<Cell>> &board);
+    double checkBasicValidity(const std::vector<std::vector<Cell>>& board);
+    double calculateFitness(Individual& individual);
+    Individual createRandomIndividual();
+    void heavyMutation(Individual& ind);
+    Individual crossover(const Individual& parent1, const Individual& parent2);
+    void mutate(Individual& ind, int& generationsWithoutImprovement);
+    void printBoard(std::vector<std::vector<Cell>>& board) const;
+    bool isClueValuePossible(int clue, int length);
+    int countRunLength(const std::vector<std::vector<Cell>>& board, int startX, int startY, bool horizontal);
+    void adjustRunOrClue(std::vector<std::vector<Cell>>& board, int x, int y, bool horizontal, std::mt19937& rng);
+    void constraintGuidedMutation(Individual& ind, int generationsStuck);
+    std::vector<Run> analyzeRunLengths(const std::vector<std::vector<Cell>>& board);
+    void optimizeRunLengths(std::vector<std::vector<Cell>>& board);
 
 public:
-    explicit KakuroGenerator(int boardSize, int popSize = 50, int gens = 100,
-                    double mutRate = 0.1, double crossRate = 0.7);
-
-    std::vector<std::vector<Cell>> generateBoard(double targetFitness = 0.98,
-                                                 std::chrono::seconds maxTime = std::chrono::seconds(300));
-
-    void writeToFile(const std::string &filename, std::vector<std::vector<Cell>> &board) const;
-
-
-private:
-    // Tournament selection with adaptive size
-    Individual tournamentSelect(const std::vector<Individual> &population, int &generation);
-
+    KakuroGenerator(int boardSize);
+    std::vector<std::vector<Cell>> generateBoard(int maxGenerations = 2000, int maxTimeSeconds = 300);
 };
 
-
-#endif //PART2_KAKUROGENERATOR_H
+#endif // KAKUROGENERATOR_H
