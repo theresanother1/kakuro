@@ -45,14 +45,6 @@ private:
         Individual(int size);
     };
 
-    struct Run {
-        int startX, startY;
-        int length;
-        bool horizontal;
-
-        Run(int x, int y, int l, bool h);
-    };
-
     const int size;
     const int populationSize;
     const double mutationRate;

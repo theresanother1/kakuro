@@ -6,6 +6,7 @@
 #include <random>
 #include <algorithm>
 #include <chrono>
+#include <map>
 #include "KakuroSolver.h"
 
 class KakuroBoard {
@@ -393,158 +394,219 @@ private:
 
     struct Run {
         int startX, startY;
-        int length;
+        int endX, endY;
         bool horizontal;
 
-        Run(int x, int y, int l, bool h) : startX(x), startY(y), length(l), horizontal(h) {}
+        Run(int x, int y, bool h) : startX(x), startY(y), horizontal(h) {}
+
+        Run(int sx, int sy, int ex, int ey, bool h)
+                : startX(sx), startY(sy), endX(ex), endY(ey), horizontal(h) {}
     };
 
-    double calculateFitness(Individual &individual) {
-        KakuroSolver solver(size);
+    //helper struct to evaluate fitness
+    struct FitnessComponents {
+        double basicValidity;
+        double runQuality;
+        double clueDistribution;
+        double boardBalance;
+        double solvability;
 
-        // Copy board configuration to solver
-        for (int i = 0; i < size; ++i) {
-            for (int j = 0; j < size; ++j) {
-                solver.setCell(i, j,
-                               individual.board[i][j].isBlack,
-                               individual.board[i][j].downClue,
-                               individual.board[i][j].rightClue);
-            }
-        }
-        // First check basic validity and provide partial fitness
-        double basicValidityScore = checkBasicValidity(individual.board);
-        if (basicValidityScore < 0.5) {  // If board is very invalid, return partial score
-            return basicValidityScore * 0.2;  // Scale down to indicate it's far from complete
-        }
+        FitnessComponents() : basicValidity(0), runQuality(0),
+                              clueDistribution(0), boardBalance(0),
+                              solvability(0) {}
+    };
 
-
-        // Intermediate rewards for partial improvements
-        double intermediateScore = 0.0;
-
-        // Reward for proper clue ranges (3-45 for kakuro)
-        int validClueRanges = 0;
-        int totalClues = 0;
-        for (int i = 0; i < size; ++i) {
-            for (int j = 0; j < size; ++j) {
-                if (individual.board[i][j].downClue > 0) {
-                    totalClues++;
-                    if (individual.board[i][j].downClue >= 3 && individual.board[i][j].downClue <= 45) {
-                        validClueRanges++;
-                    }
-                }
-                if (individual.board[i][j].rightClue > 0) {
-                    totalClues++;
-                    if (individual.board[i][j].rightClue >= 3 && individual.board[i][j].rightClue <= 45) {
-                        validClueRanges++;
-                    }
-                }
-            }
-        }
-        if (totalClues > 0) {
-            intermediateScore += 0.1 * (static_cast<double>(validClueRanges) / totalClues);
-        }
-
-        // Reward for proper run lengths (2-9 cells for kakuro)
-        int validRunLengths = 0;
+    // fitness calculation helper function
+    double calculateRunQualityScore(const std::vector<std::vector<Cell>> &board) {
+        double score = 0.0;
         int totalRuns = 0;
+
+        // Analyze horizontal runs
         for (int i = 0; i < size; ++i) {
             for (int j = 0; j < size; ++j) {
-                if (individual.board[i][j].isBlack) {
-                    if (individual.board[i][j].rightClue > 0) {
-                        totalRuns++;
-                        int runLength = 0;
-                        for (int k = j + 1; k < size && !individual.board[i][k].isBlack; k++) {
-                            runLength++;
-                        }
-                        if (runLength >= 2 && runLength <= 9) {
-                            validRunLengths++;
-                        }
+                if (board[i][j].isBlack && board[i][j].rightClue > 0) {
+                    totalRuns++;
+                    int runLength = 0;
+                    int k = j + 1;
+                    while (k < size && !board[i][k].isBlack) {
+                        runLength++;
+                        k++;
                     }
-                    if (individual.board[i][j].downClue > 0) {
-                        totalRuns++;
-                        int runLength = 0;
-                        for (int k = i + 1; k < size && !individual.board[k][j].isBlack; k++) {
-                            runLength++;
-                        }
-                        if (runLength >= 2 && runLength <= 9) {
-                            validRunLengths++;
-                        }
+
+                    // Score based on optimal run length (2-4 cells is ideal for most puzzles)
+                    if (runLength >= 2 && runLength <= 4) {
+                        score += 1.0;
+                    } else if (runLength > 4 && runLength <= 6) {
+                        score += 0.7;
+                    } else if (runLength > 6) {
+                        score += 0.3;
+                    }
+
+                    // Check if clue value is reasonable for the run length
+                    int clue = board[i][j].rightClue;
+                    int minPossible = (runLength * (runLength + 1)) / 2;  // Sum of smallest numbers
+                    int maxPossible =
+                            runLength * 9 - (runLength * (runLength - 1)) / 2;  // Sum of largest possible numbers
+
+                    if (clue >= minPossible && clue <= maxPossible) {
+                        score += 0.5;
                     }
                 }
             }
         }
-        if (totalRuns > 0) {
-            intermediateScore += 0.1 * (static_cast<double>(validRunLengths) / totalRuns);
-        }
 
+        // Analyze vertical runs (similar to horizontal)
+        for (int j = 0; j < size; ++j) {
+            for (int i = 0; i < size; ++i) {
+                if (board[i][j].isBlack && board[i][j].downClue > 0) {
+                    totalRuns++;
+                    int runLength = 0;
+                    int k = i + 1;
+                    while (k < size && !board[k][j].isBlack) {
+                        runLength++;
+                        k++;
+                    }
 
-        // Check if board is fully valid
-        if (!solver.isValidBoard()) {
-            return (basicValidityScore * 0.6) + (intermediateScore * 0.4); // Return higher partial score for nearly valid boards
-        }
+                    if (runLength >= 2 && runLength <= 4) {
+                        score += 1.0;
+                    } else if (runLength > 4 && runLength <= 6) {
+                        score += 0.7;
+                    } else if (runLength > 6) {
+                        score += 0.3;
+                    }
 
-        std::vector<std::vector<Cell>> solution;
-        SolveResult result = solver.solveBoard(solution);
+                    int clue = board[i][j].downClue;
+                    int minPossible = (runLength * (runLength + 1)) / 2;
+                    int maxPossible = runLength * 9 - (runLength * (runLength - 1)) / 2;
 
-        double solvabilityScore = 0.0;
-        double uniquenessScore = 0.0;
-        double complexityScore = 0.0;
-        double balanceScore = 0.0;
-
-        // Evaluate solvability and uniqueness
-        switch (result) {
-            case SolveResult::UNIQUE_SOLUTION:
-                solvabilityScore = 1.0;
-                uniquenessScore = 1.0;
-                return 1.0;
-                break;
-            case SolveResult::MULTIPLE_SOLUTIONS:
-                solvabilityScore = 0.6;
-                uniquenessScore = 0.3;
-                break;
-            case SolveResult::NO_SOLUTION:
-                return 0.0;
-        }
-
-        // Calculate complexity score based on number of clues and their values
-        totalClues = 0;
-        int totalClueValue = 0;
-        for (int i = 0; i < size; ++i) {
-            for (int j = 0; j < size; ++j) {
-                if (individual.board[i][j].downClue > 0) {
-                    totalClues++;
-                    totalClueValue += individual.board[i][j].downClue;
-                }
-                if (individual.board[i][j].rightClue > 0) {
-                    totalClues++;
-                    totalClueValue += individual.board[i][j].rightClue;
+                    if (clue >= minPossible && clue <= maxPossible) {
+                        score += 0.5;
+                    }
                 }
             }
         }
 
-        // Prefer boards with a good number of clues (around 30% of cells)
-        double optimalClueRatio = 0.3;
-        double actualClueRatio = static_cast<double>(totalClues) / (size * size);
-        complexityScore = 1.0 - std::abs(actualClueRatio - optimalClueRatio);
+        return totalRuns > 0 ? score / (totalRuns * 1.5) : 0.0;  // Normalize score
+    }
 
-        // Calculate balance score (distribution of black vs white cells)
-        int whiteCount = 0;
+    //fitness calculation helper function
+    double calculateClueDistributionScore(const std::vector<std::vector<Cell>> &board) {
+        double score = 0.0;
+        int totalClues = 0;
+        std::map<int, int> clueFrequency;  // Track frequency of clue values
+
+        // Collect clue statistics
         for (int i = 0; i < size; ++i) {
             for (int j = 0; j < size; ++j) {
-                if (!individual.board[i][j].isBlack) {
-                    whiteCount++;
+                if (board[i][j].isBlack) {
+                    if (board[i][j].rightClue > 0) {
+                        clueFrequency[board[i][j].rightClue]++;
+                        totalClues++;
+                    }
+                    if (board[i][j].downClue > 0) {
+                        clueFrequency[board[i][j].downClue]++;
+                        totalClues++;
+                    }
                 }
             }
         }
-        double whiteRatio = static_cast<double>(whiteCount) / (size * size);
-        double optimalWhiteRatio = 0.7; // Prefer around 70% white cells
-        balanceScore = 1.0 - std::abs(whiteRatio - optimalWhiteRatio);
 
-        // Combine scores with weights
-        return WEIGHT_SOLVABILITY * solvabilityScore +
-               WEIGHT_UNIQUENESS * uniquenessScore +
-               WEIGHT_COMPLEXITY * complexityScore +
-               WEIGHT_BALANCE * balanceScore;
+        // Calculate distribution score
+        if (totalClues > 0) {
+            // Reward diversity in clue values
+            double uniqueClueRatio = static_cast<double>(clueFrequency.size()) / totalClues;
+            score += uniqueClueRatio * 0.5;
+
+            // Reward reasonable clue ranges (prefer values between 3 and 45)
+            int reasonableClues = 0;
+            for (const auto &[clue, freq]: clueFrequency) {
+                if (clue >= 3 && clue <= 45) {
+                    reasonableClues += freq;
+                }
+            }
+            score += static_cast<double>(reasonableClues) / totalClues * 0.5;
+        }
+
+        return score;
+    }
+
+    //fitness calculation helper function
+    double calculateBoardBalanceScore(const std::vector<std::vector<Cell>> &board) {
+        int totalCells = size * size;
+        int blackCells = 0;
+        int whiteCells = 0;
+
+        for (int i = 0; i < size; ++i) {
+            for (int j = 0; j < size; ++j) {
+                if (board[i][j].isBlack) {
+                    blackCells++;
+                } else {
+                    whiteCells++;
+                }
+            }
+        }
+
+        // Ideal ratio is around 30% black cells, 70% white cells
+        double idealBlackRatio = 0.3;
+        double actualBlackRatio = static_cast<double>(blackCells) / totalCells;
+
+        return 1.0 - std::abs(idealBlackRatio - actualBlackRatio);
+    }
+
+    double calculateFitness(Individual &individual) {
+        FitnessComponents components;
+
+        // Calculate basic validity (existing checkBasicValidity function)
+        components.basicValidity = checkBasicValidity(individual.board);
+
+        // If board is very invalid, return early with partial score
+        if (components.basicValidity < 0.3) {
+            return components.basicValidity * 0.2;
+        }
+
+        // Calculate additional components
+        components.runQuality = calculateRunQualityScore(individual.board);
+        components.clueDistribution = calculateClueDistributionScore(individual.board);
+        components.boardBalance = calculateBoardBalanceScore(individual.board);
+
+        // Check solvability only if other components are promising
+        if (components.basicValidity > 0.6 &&
+            components.runQuality > 0.5 &&
+            components.clueDistribution > 0.5) {
+
+            KakuroSolver solver(size);
+            // Copy board configuration to solver
+            for (int i = 0; i < size; ++i) {
+                for (int j = 0; j < size; ++j) {
+                    solver.setCell(i, j,
+                                   individual.board[i][j].isBlack,
+                                   individual.board[i][j].downClue,
+                                   individual.board[i][j].rightClue);
+                }
+            }
+
+            std::vector<std::vector<Cell>> solution;
+            SolveResult result = solver.solveBoard(solution);
+
+            switch (result) {
+                case SolveResult::UNIQUE_SOLUTION:
+                    components.solvability = 1.0;
+                    return 1.0; // perfect board immediate return
+                case SolveResult::MULTIPLE_SOLUTIONS:
+                    components.solvability = 0.3;
+                    break;
+                case SolveResult::NO_SOLUTION:
+                    components.solvability = 0.0;
+                    break;
+            }
+        }
+
+        // Combine components with weights
+        return components.basicValidity * 0.25 +
+               components.runQuality * 0.25 +
+               components.clueDistribution * 0.15 +
+               components.boardBalance * 0.10 +
+               components.solvability * 0.25;
     }
 
     Individual createRandomIndividual() {
@@ -605,193 +667,297 @@ private:
         }
     }
 
+    std::vector<Run> identifyRuns(const std::vector<std::vector<Cell>> &board) {
+        std::vector<Run> runs;
+
+        // Find horizontal runs
+        for (int i = 0; i < size; ++i) {
+            for (int j = 0; j < size; ++j) {
+                if (board[i][j].isBlack && board[i][j].rightClue > 0) {
+                    int endJ = j + 1;
+                    while (endJ < size && !board[i][endJ].isBlack) {
+                        endJ++;
+                    }
+                    if (endJ - j > 1) {  // Run must be at least 2 cells
+                        runs.emplace_back(i, j, i, endJ - 1, true);
+                    }
+                }
+            }
+        }
+
+        // Find vertical runs
+        for (int j = 0; j < size; ++j) {
+            for (int i = 0; i < size; ++i) {
+                if (board[i][j].isBlack && board[i][j].downClue > 0) {
+                    int endI = i + 1;
+                    while (endI < size && !board[endI][j].isBlack) {
+                        endI++;
+                    }
+                    if (endI - i > 1) {  // Run must be at least 2 cells
+                        runs.emplace_back(i, j, endI - 1, j, false);
+                    }
+                }
+            }
+        }
+
+        return runs;
+    }
+
 
     Individual crossover(const Individual &parent1, const Individual &parent2) {
         Individual child(size);
         std::uniform_real_distribution<> dist(0.0, 1.0);
 
+        // First, identify valid runs in both parents
+        auto runs1 = identifyRuns(parent1.board);
+        auto runs2 = identifyRuns(parent2.board);
+
+        // Initialize child with empty board (all black cells)
         for (int i = 0; i < size; ++i) {
             for (int j = 0; j < size; ++j) {
-                // 50% chance to inherit from each parent
-                if (dist(rng) < 0.5) {
-                    child.board[i][j] = parent1.board[i][j];
+                child.board[i][j] = Cell(true);  // Start with black cells
+            }
+        }
+
+        // Keep track of modified regions
+        std::vector<std::vector<bool>> modified(size, std::vector<bool>(size, false));
+
+        // First phase: Copy complete runs from parents
+        for (const auto &run: (dist(rng) < 0.5 ? runs1 : runs2)) {
+            if (dist(rng) < 0.5) {  // 50% chance to copy a run
+                const auto &sourceBoard = (dist(rng) < 0.5 ? parent1.board : parent2.board);
+
+                // Check if we can copy this run (no conflicts with already copied runs)
+                bool canCopy = true;
+                if (run.horizontal) {
+                    for (int j = run.startY; j <= run.endY; ++j) {
+                        if (modified[run.startX][j]) {
+                            canCopy = false;
+                            break;
+                        }
+                    }
                 } else {
-                    child.board[i][j] = parent2.board[i][j];
+                    for (int i = run.startX; i <= run.endX; ++i) {
+                        if (modified[i][run.startY]) {
+                            canCopy = false;
+                            break;
+                        }
+                    }
+                }
+
+                // Copy the run if possible
+                if (canCopy) {
+                    // Copy the black cell with clues
+                    if (run.horizontal) {
+                        child.board[run.startX][run.startY] = sourceBoard[run.startX][run.startY];
+                        modified[run.startX][run.startY] = true;
+
+                        // Copy white cells
+                        for (int j = run.startY + 1; j <= run.endY; ++j) {
+                            child.board[run.startX][j] = sourceBoard[run.startX][j];
+                            modified[run.startX][j] = true;
+                        }
+                    } else {
+                        child.board[run.startX][run.startY] = sourceBoard[run.startX][run.startY];
+                        modified[run.startX][run.startY] = true;
+
+                        // Copy white cells
+                        for (int i = run.startX + 1; i <= run.endX; ++i) {
+                            child.board[i][run.startY] = sourceBoard[i][run.startY];
+                            modified[i][run.startY] = true;
+                        }
+                    }
                 }
             }
         }
+
+        // add more randomness to crossover
+        for (int i = 0; i < size; ++i) {  // Skip border cells
+            for (int j = 0; j < size; ++j) {  // Skip border cells
+                if (!modified[i][j] && dist(rng) < 0.3) {  // 30% chance of random cell
+                    child.board[i][j] = Cell(dist(rng) < 0.5);  // Random cell type
+                } else if (!modified[i][j]) {
+                    child.board[i][j] = (dist(rng) < 0.5) ?
+                                        parent1.board[i][j] : parent2.board[i][j];
+                }
+            }
+        }
+
+        // Second phase: Fill remaining cells from either parent
+        for (int i = 0; i < size; ++i) {
+            for (int j = 0; j < size; ++j) {
+                if (!modified[i][j]) {
+                    // Choose from which parent to copy
+                    child.board[i][j] = (dist(rng) < 0.5) ?
+                                        parent1.board[i][j] : parent2.board[i][j];
+                }
+            }
+        }
+
+        // Third phase: Quick validation and repair
+        repairInvalidCells(child.board);
+
         return child;
     }
 
-    // Test with different mutation - did not help
-    /*
-    void mutate(Individual &ind, int &generationsWithoutImprovement) {
-        std::uniform_real_distribution<> dist(0.0, 1.0);
-        std::uniform_int_distribution<> clueDist(3, 45);
-
-        // Adaptive mutation rate based on fitness and stagnation
-        double adaptiveMutationRate = mutationRate * (1.0 - ind.fitness);
-        if (generationsWithoutImprovement > 15) {
-            adaptiveMutationRate *= (1.0 + (generationsWithoutImprovement - 15) * 0.05);
-        }
-
-        // Different types of mutations with different probabilities
-        for (int i = 1; i < size; ++i) {
-            for (int j = 1; j < size; ++j) {
-                double mutationType = dist(rng);
-
-                if (mutationType < adaptiveMutationRate * 0.3) {  // Small clue modifications
-                    if (ind.board[i][j].isBlack) {
-                        // Slightly modify existing clues
-                        if (ind.board[i][j].rightClue > 0) {
-                            int currentClue = ind.board[i][j].rightClue;
-                            // 50% chance to increment or decrement
-                            if (dist(rng) < 0.5) {
-                                currentClue = std::min(45, currentClue + 1);
-                            } else {
-                                currentClue = std::max(3, currentClue - 1);
-                            }
-                            ind.board[i][j].rightClue = currentClue;
-                        }
-                        if (ind.board[i][j].downClue > 0) {
-                            int currentClue = ind.board[i][j].downClue;
-                            if (dist(rng) < 0.5) {
-                                currentClue = std::min(45, currentClue + 1);
-                            } else {
-                                currentClue = std::max(3, currentClue - 1);
-                            }
-                            ind.board[i][j].downClue = currentClue;
-                        }
-                    }
-                }
-                else if (mutationType < adaptiveMutationRate * 0.6) {  // Add/remove clues
-                    if (ind.board[i][j].isBlack) {
-                        // Toggle clues without changing cell type
-                        if (j + 1 < size && !ind.board[i][j + 1].isBlack) {
-                            if (ind.board[i][j].rightClue == 0 && dist(rng) < 0.3) {
-                                ind.board[i][j].rightClue = clueDist(rng);
-                            } else if (ind.board[i][j].rightClue > 0 && dist(rng) < 0.1) {
-                                ind.board[i][j].rightClue = 0;
-                            }
-                        }
-                        if (i + 1 < size && !ind.board[i + 1][j].isBlack) {
-                            if (ind.board[i][j].downClue == 0 && dist(rng) < 0.3) {
-                                ind.board[i][j].downClue = clueDist(rng);
-                            } else if (ind.board[i][j].downClue > 0 && dist(rng) < 0.1) {
-                                ind.board[i][j].downClue = 0;
+    void repairInvalidCells(std::vector<std::vector<Cell>> &board) {
+        // Only fix completely isolated cells
+        for (int i = 1; i < size - 1; ++i) {
+            for (int j = 1; j < size - 1; ++j) {
+                if (!board[i][j].isBlack) {
+                    bool completelyIsolated = true;
+                    // Check all 8 neighboring cells
+                    for (int di = -1; di <= 1; ++di) {
+                        for (int dj = -1; dj <= 1; ++dj) {
+                            if (di == 0 && dj == 0) continue;
+                            if (!board[i + di][j + dj].isBlack) {
+                                completelyIsolated = false;
+                                break;
                             }
                         }
                     }
-                }
-                else if (mutationType < adaptiveMutationRate) {  // Cell type changes (least frequent)
-                    // Only flip cell type if it doesn't break runs
-                    bool canFlip = true;
-                    if (!ind.board[i][j].isBlack) {
-                        // Check if this cell is part of a valid run
-                        bool inHorizontalRun = (j > 0 && ind.board[i][j-1].rightClue > 0);
-                        bool inVerticalRun = (i > 0 && ind.board[i-1][j].downClue > 0);
-                        if (inHorizontalRun || inVerticalRun) {
-                            canFlip = false;
-                        }
-                    }
-
-                    if (canFlip) {
-                        ind.board[i][j].isBlack = !ind.board[i][j].isBlack;
-                        if (!ind.board[i][j].isBlack) {
-                            ind.board[i][j].rightClue = 0;
-                            ind.board[i][j].downClue = 0;
-                        }
+                    if (completelyIsolated) {
+                        board[i][j].isBlack = true;
                     }
                 }
             }
         }
-
-        // Occasional repair step
-        if (dist(rng) < 0.1) {
-            repairInvalidRuns(ind.board);
-        }
     }
 
-    void repairInvalidRuns(std::vector<std::vector<Cell>>& board) {
-        // Fix runs that are too short or too long
+    // Calculate difference between two boards
+    double calculateBoardDistance(const std::vector<std::vector<Cell>> &board1,
+                                  const std::vector<std::vector<Cell>> &board2) {
+        int differences = 0;
+        int totalCells = size * size;
+
         for (int i = 0; i < size; ++i) {
             for (int j = 0; j < size; ++j) {
-                if (board[i][j].isBlack) {
-                    // Check horizontal runs
-                    if (board[i][j].rightClue > 0) {
-                        int runLength = 0;
-                        for (int k = j + 1; k < size && !board[i][k].isBlack; k++) {
-                            runLength++;
-                        }
-                        if (runLength < 2 || runLength > 9) {
-                            // Either remove the clue or adjust the run
-                            if (runLength < 2) {
-                                board[i][j].rightClue = 0;
-                            } else if (runLength > 9) {
-                                // Add a black cell to shorten the run
-                                board[i][j + 9].isBlack = true;
-                            }
-                        }
-                    }
+                // Compare cell types
+                if (board1[i][j].isBlack != board2[i][j].isBlack) {
+                    differences++;
+                    continue;
+                }
 
-                    // Check vertical runs
-                    if (board[i][j].downClue > 0) {
-                        int runLength = 0;
-                        for (int k = i + 1; k < size && !board[k][j].isBlack; k++) {
-                            runLength++;
-                        }
-                        if (runLength < 2 || runLength > 9) {
-                            if (runLength < 2) {
-                                board[i][j].downClue = 0;
-                            } else if (runLength > 9) {
-                                board[i + 9][j].isBlack = true;
-                            }
-                        }
-                    }
+                // If both are black, compare clues
+                if (board1[i][j].isBlack) {
+                    if (board1[i][j].rightClue != board2[i][j].rightClue) differences++;
+                    if (board1[i][j].downClue != board2[i][j].downClue) differences++;
                 }
             }
         }
-    }
-*/
 
-    void mutate(Individual &ind, int &generationsWithoutImprovement) {
+        return static_cast<double>(differences) / (totalCells * 1.5); // Normalize to [0,1]
+    }
+
+    // Calculate population diversity
+    double calculatePopulationDiversity(const std::vector<Individual> &population) {
+        double totalDistance = 0.0;
+        int comparisons = 0;
+
+        // Compare each individual with every other individual
+        for (size_t i = 0; i < population.size(); ++i) {
+            for (size_t j = i + 1; j < population.size(); ++j) {
+                totalDistance += calculateBoardDistance(population[i].board, population[j].board);
+                comparisons++;
+            }
+        }
+
+        // Return average distance between all pairs
+        return comparisons > 0 ? totalDistance / comparisons : 0.0;
+    }
+
+
+    // Mutation based implementation
+    struct MutationStats {
+        double successRate;      // Rate of successful mutations
+        int totalMutations;      // Total mutation attempts
+        int successfulMutations; // Mutations that improved fitness
+
+        MutationStats() : successRate(0.5), totalMutations(0),
+                          successfulMutations(0) {}
+    };
+
+    // Track mutation statistics per generation
+    MutationStats mutationStats;
+
+    // New configuration parameters
+    const double MIN_MUTATION_RATE = 0.01;
+    const double MAX_MUTATION_RATE = 0.3;
+    const int ADAPTATION_INTERVAL = 5;  // Generations between rate adjustments
+
+    double calculateAdaptiveMutationRate(const Individual &ind,
+                                         int generationsWithoutImprovement,
+                                         double populationDiversity) {
+        // Start with base mutation rate modified by individual's fitness
+        double rate = mutationRate * (1.0 - ind.fitness);
+
+        // Adjust based on generations without improvement
+        double stagnationFactor = 1.0 + (generationsWithoutImprovement / 20.0);
+        rate *= stagnationFactor;
+
+        // Adjust based on population diversity
+        double diversityFactor = 1.0 + (1.0 - populationDiversity);
+        rate *= diversityFactor;
+
+        // Adjust based on mutation success rate
+        double successFactor = 1.0;
+        if (mutationStats.totalMutations > 0) {
+            successFactor = 1.0 + (0.5 - mutationStats.successRate);
+        }
+        rate *= successFactor;
+
+        // Ensure rate stays within bounds
+        return std::min(MAX_MUTATION_RATE, std::max(MIN_MUTATION_RATE, rate));
+    }
+
+    void updateMutationStats(double oldFitness, double newFitness) {
+        mutationStats.totalMutations++;
+        if (newFitness > oldFitness) {
+            mutationStats.successfulMutations++;
+        }
+
+        if (mutationStats.totalMutations >= 100) {  // Update rate periodically
+            mutationStats.successRate = static_cast<double>(mutationStats.successfulMutations) /
+                                        mutationStats.totalMutations;
+            // Reset counters but keep success rate
+            mutationStats.totalMutations = 0;
+            mutationStats.successfulMutations = 0;
+        }
+    }
+
+
+    void mutate(Individual &ind, int generationsWithoutImprovement, double populationDiversity) {
+        double oldFitness = ind.fitness;
         std::uniform_real_distribution<> dist(0.0, 1.0);
         std::uniform_int_distribution<> clueDist(1, 45);
 
+        // Calculate adaptive rate
+        double adaptiveMutationRate = calculateAdaptiveMutationRate(
+                ind, generationsWithoutImprovement, populationDiversity);
 
-        // Adaptive mutation rate based on fitness
-        double adaptiveMutationRate = mutationRate * (1.0 - ind.fitness);
+        // Apply different mutation strategies based on board state
+        bool boardModified = false;
 
-        // Adapt mutation rate, if too many generations without improvement
-        if (generationsWithoutImprovement == 15) {
-            //std::cout << "20 generations without best fitness improvement - adapting mutation rate old " << adaptiveMutationRate << " new ";
-            adaptiveMutationRate *= (1.0 + (generationsWithoutImprovement - 20) * 0.05);
-            //std::cout << " " << adaptiveMutationRate << std::endl;
-        } else if (generationsWithoutImprovement == 25) {
-            adaptiveMutationRate *= (1.0 + (generationsWithoutImprovement - 20) * 0.08);
-        } else if (generationsWithoutImprovement == 40) {
-            adaptiveMutationRate = mutationRate * (1.0 - ind.fitness);
+        // Strategy 1: Fix isolated cells
+        if (dist(rng) < adaptiveMutationRate * 1.5) {
+            boardModified |= fixIsolatedCells(ind);
         }
 
-/* //Note: test to react to generationswithout improvement did not really help
-        if (generationsWithoutImprovement >= 10) {
-            double optimizeProb = 0.2 + (generationsWithoutImprovement * 0.01);  // Increases with stagnation
-            if (dist(rng) < optimizeProb) {
-                optimizeRunLengths(ind.board);
-            }
-        } else if (generationsWithoutImprovement >= 5) {
-            constraintGuidedMutation(ind, generationsWithoutImprovement);
-        } else {
-*/
-        // Regular mutations
+        // Strategy 2: Optimize run lengths
+        if (dist(rng) < adaptiveMutationRate * 1.2) {
+            boardModified |= optimizeRunLengths(ind);
+        }
+
+        // Strategy 3: Regular cell mutations with adaptive rate
         for (int i = 1; i < size; ++i) {
             for (int j = 1; j < size; ++j) {
                 if (dist(rng) < adaptiveMutationRate) {
+                    boardModified = true;
                     // Flip cell type
                     ind.board[i][j].isBlack = !ind.board[i][j].isBlack;
 
                     if (ind.board[i][j].isBlack) {
-                        // Maybe add clues
+                        // Add clues with higher probability for black cells
                         if (j + 1 < size && !ind.board[i][j + 1].isBlack) {
                             ind.board[i][j].rightClue = (dist(rng) < 0.7) ? clueDist(rng) : 0;
                         }
@@ -799,13 +965,19 @@ private:
                             ind.board[i][j].downClue = (dist(rng) < 0.7) ? clueDist(rng) : 0;
                         }
                     } else {
-                        // Clear clues if cell becomes white
+                        // Clear clues for white cells
                         ind.board[i][j].rightClue = 0;
                         ind.board[i][j].downClue = 0;
                     }
-                } else if (ind.board[i][j].isBlack) {
-                    // Mutate existing clues with lower probability
-                    if (dist(rng) < adaptiveMutationRate * 0.5) {
+                }
+            }
+        }
+
+        // Strategy 4: Mutate existing clues
+        if (boardModified) {
+            for (int i = 1; i < size; ++i) {
+                for (int j = 1; j < size; ++j) {
+                    if (ind.board[i][j].isBlack && dist(rng) < adaptiveMutationRate * 0.5) {
                         if (ind.board[i][j].rightClue > 0) {
                             ind.board[i][j].rightClue = clueDist(rng);
                         }
@@ -816,6 +988,89 @@ private:
                 }
             }
         }
+
+        // Update mutation statistics
+        if (boardModified) {
+            double newFitness = calculateFitness(ind);
+            updateMutationStats(oldFitness, newFitness);
+        }
+    }
+
+    bool fixIsolatedCells(Individual &ind) {
+        bool modified = false;
+        for (int i = 1; i < size - 1; ++i) {
+            for (int j = 1; j < size - 1; ++j) {
+                if (!ind.board[i][j].isBlack) {
+                    // Check if cell is isolated
+                    bool hasConnection = false;
+                    if (!ind.board[i - 1][j].isBlack || !ind.board[i + 1][j].isBlack ||
+                        !ind.board[i][j - 1].isBlack || !ind.board[i][j + 1].isBlack) {
+                        hasConnection = true;
+                    }
+
+                    if (!hasConnection) {
+                        // Convert to black cell
+                        ind.board[i][j].isBlack = true;
+                        modified = true;
+                    }
+                }
+            }
+        }
+        return modified;
+    }
+
+    bool optimizeRunLengths(Individual &ind) {
+        bool modified = false;
+        std::uniform_real_distribution<> dist(0.0, 1.0);
+        std::uniform_int_distribution<> clueDist(1, 45);
+
+        // Check horizontal runs
+        for (int i = 0; i < size; ++i) {
+            int runLength = 0;
+            int startJ = -1;
+
+            for (int j = 0; j < size; ++j) {
+                if (!ind.board[i][j].isBlack) {
+                    if (runLength == 0) startJ = j;
+                    runLength++;
+                } else {
+                    if (runLength > 6) {  // Split long runs
+                        int splitPoint = startJ + runLength / 2;
+                        ind.board[i][splitPoint].isBlack = true;
+                        if (dist(rng) < 0.7) {
+                            ind.board[i][splitPoint].rightClue = clueDist(rng);
+                        }
+                        modified = true;
+                    }
+                    runLength = 0;
+                }
+            }
+        }
+
+        // Check vertical runs (similar to horizontal)
+        for (int j = 0; j < size; ++j) {
+            int runLength = 0;
+            int startI = -1;
+
+            for (int i = 0; i < size; ++i) {
+                if (!ind.board[i][j].isBlack) {
+                    if (runLength == 0) startI = i;
+                    runLength++;
+                } else {
+                    if (runLength > 6) {
+                        int splitPoint = startI + runLength / 2;
+                        ind.board[splitPoint][j].isBlack = true;
+                        if (dist(rng) < 0.7) {
+                            ind.board[splitPoint][j].downClue = clueDist(rng);
+                        }
+                        modified = true;
+                    }
+                    runLength = 0;
+                }
+            }
+        }
+
+        return modified;
     }
 
     void printBoard(std::vector<std::vector<Cell>> &board) const {
@@ -847,426 +1102,391 @@ private:
         std::cout << "\n";
     }
 
-    //constraint guided mutation - test in order to guide towards solvable board
-    bool isClueValuePossible(int clue, int length) {
-        // Validate inputs
-        if (length <= 0 || length > 9) {
-            return false;
-        }
-        if (clue <= 0) {
-            return false;
-        }
+    // Island model for evolving
+    struct Island {
+        std::vector<Individual> population;
+        double bestFitness;
+        Individual bestIndividual;
+        double mutationRate;  // Island-specific mutation rate
+        double crossoverRate; // Island-specific crossover rate
+        int generationsWithoutImprovement;
 
-        // Minimum possible sum for length (1+2+3+...)
-        int minSum = (length * (length + 1)) / 2;
-        // Maximum possible sum for length (9+8+7+...)
-        int maxSum = 0;
-        for (int i = 0; i < length; ++i) {
-            maxSum += (9 - i);
-        }
+        Island(int size, int popSize) :
+                population(popSize, Individual(size)),
+                bestFitness(0.0),
+                bestIndividual(size),
+                mutationRate(0.1),
+                crossoverRate(0.7),
+                generationsWithoutImprovement(0) {}
+    };
 
-        return clue >= minSum && clue <= maxSum;
+    // Configuration for island model
+    static const int NUM_ISLANDS = 6;
+    static const int MIGRATION_INTERVAL = 25;
+    static const int MIGRATION_SIZE = 2;
+    static const int MIN_ISLAND_SIZE = 15;
+    static const int OPTIMAL_ISLAND_SIZE = 20;
+    const double MIGRATION_SELECTION_PRESSURE = 0.8;
+
+    std::vector<Island> islands;
+
+    double calculateAverageIslandFitness(const Island &island) {
+        if (island.population.empty()) return 0.0;
+        double sum = 0.0;
+        for (const auto &ind: island.population) {
+            sum += ind.fitness;
+        }
+        return sum / island.population.size();
     }
 
-    int countRunLength(const std::vector<std::vector<Cell>> &board, int startX, int startY, bool horizontal) {
-        // Validate starting position
-        if (startX < 0 || startX >= size || startY < 0 || startY >= size) {
-            return 0;
-        }
 
-        // Check if starting cell is valid
-        if (!board[startX][startY].isBlack) {
-            return 0;
-        }
-
-        // Check if there's a clue
-        if (horizontal && board[startX][startY].rightClue <= 0) {
-            return 0;
-        }
-        if (!horizontal && board[startX][startY].downClue <= 0) {
-            return 0;
-        }
-
-        int length = 0;
-        if (horizontal) {
-            int j = startY + 1;
-            while (j < size && !board[startX][j].isBlack) {
-                length++;
-                ++j;
-            }
-        } else {
-            int i = startX + 1;
-            while (i < size && !board[i][startY].isBlack) {
-                length++;
-                ++i;
-            }
-        }
-
-        return length;
-    }
-
-    void adjustRunOrClue(std::vector<std::vector<Cell>> &board, int x, int y, bool horizontal,
-                         std::mt19937 &rng) {
-        int length = countRunLength(board, x, y, horizontal);
-        if (length == 0) {
-            return;  // Invalid run, skip adjustment
-        }
-
-        int clue = horizontal ? board[x][y].rightClue : board[x][y].downClue;
-        if (clue <= 0) {
-            return;  // Invalid clue, skip adjustment
-        }
-
-        if (!isClueValuePossible(clue, length)) {
+    void initializeWithDensity(Island &island, double blackCellProbability) {
+        for (auto &individual: island.population) {
             std::uniform_real_distribution<> dist(0.0, 1.0);
 
-            if (dist(rng) < 0.5 || length > 4) {
-                // Adjust run length by adding a black cell
-                if (horizontal) {
-                    int splitPoint = y + std::min(2, length - 1);
-                    // Ensure we're not creating a run of length 1
-                    if (splitPoint < size - 1 && splitPoint > y + 1) {
-                        board[x][splitPoint].isBlack = true;
-                        if (dist(rng) < 0.7) {
-                            // Ensure new clue is valid for remaining length
-                            int remainingLength = countRunLength(board, x, splitPoint, true);
-                            if (remainingLength > 0) {
-                                int minSum = (remainingLength * (remainingLength + 1)) / 2;
-                                int maxSum = remainingLength * 9;
-                                std::uniform_int_distribution<> clueDist(minSum, maxSum);
-                                board[x][splitPoint].rightClue = clueDist(rng);
-                            }
-                        }
-                    }
-                } else {
-                    int splitPoint = x + std::min(2, length - 1);
-                    if (splitPoint < size - 1 && splitPoint > x + 1) {
-                        board[splitPoint][y].isBlack = true;
-                        if (dist(rng) < 0.7) {
-                            int remainingLength = countRunLength(board, splitPoint, y, false);
-                            if (remainingLength > 0) {
-                                int minSum = (remainingLength * (remainingLength + 1)) / 2;
-                                int maxSum = remainingLength * 9;
-                                std::uniform_int_distribution<> clueDist(minSum, maxSum);
-                                board[splitPoint][y].downClue = clueDist(rng);
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Adjust clue value
-                int minSum = (length * (length + 1)) / 2;
-                int maxSum = length * 9;  // Simplified max calculation
-
-                if (minSum < maxSum) {  // Only adjust if valid range exists
-                    std::uniform_int_distribution<> validClueDist(minSum, maxSum);
-                    if (horizontal) {
-                        board[x][y].rightClue = validClueDist(rng);
+            // Initialize board with specified density
+            for (int i = 1; i < size - 1; ++i) {
+                for (int j = 1; j < size - 1; ++j) {
+                    if (dist(rng) < blackCellProbability) {
+                        individual.board[i][j] = Cell(true);
                     } else {
-                        board[x][y].downClue = validClueDist(rng);
+                        individual.board[i][j] = Cell(false);
                     }
                 }
+            }
+
+            // Calculate initial fitness
+            individual.fitness = calculateFitness(individual);
+
+            // Update island's best if needed
+            if (individual.fitness > island.bestFitness) {
+                island.bestFitness = individual.fitness;
+                island.bestIndividual = individual;
             }
         }
     }
 
-    void constraintGuidedMutation(Individual &ind, int generationsStuck) {
-        // More aggressive fixing when stuck
-        double fixProbability = std::min(0.8, 0.3 + (generationsStuck * 0.01));
+    void initializeIslands() {
+        islands.clear();
+        const int islandSize = populationSize / NUM_ISLANDS;
+
+        for (int i = 0; i < NUM_ISLANDS; ++i) {
+            islands.emplace_back(size, islandSize);
+
+            // Set island-specific parameters
+            islands[i].mutationRate = mutationRate * (0.5 + (i / (NUM_ISLANDS - 1.0)));
+            islands[i].crossoverRate = 0.6 + (0.3 * i / (NUM_ISLANDS - 1.0));
+
+            // Different initialization strategy per island
+            switch (i % 3) {
+                case 0:  // Dense black cells
+                    initializeWithDensity(islands[i], 0.4);
+                    break;
+                case 1:  // Sparse black cells
+                    initializeWithDensity(islands[i], 0.2);
+                    break;
+                case 2:  // Random density
+                    initializeWithDensity(islands[i], 0.3);
+                    break;
+            }
+        }
+    }
+
+    void balanceIslandSize(Island &island) {
+        while (island.population.size() < MIN_ISLAND_SIZE) {
+            Individual newInd = island.bestIndividual;
+            heavyMutation(newInd);
+            newInd.fitness = calculateFitness(newInd);
+            island.population.push_back(newInd);
+        }
+
+        while (island.population.size() > OPTIMAL_ISLAND_SIZE) {
+            auto worst = std::min_element(island.population.begin(),
+                                          island.population.end(),
+                                          [](const Individual &a, const Individual &b) {
+                                              return a.fitness < b.fitness;
+                                          });
+            island.population.erase(worst);
+        }
+    }
+
+    void performMigration() {
+        // Check if migration is worthwhile
+        std::vector<double> avgFitnesses(NUM_ISLANDS);
+        for (int i = 0; i < NUM_ISLANDS; ++i) {
+            avgFitnesses[i] = calculateAverageIslandFitness(islands[i]);
+        }
+
+        double maxDiff = 0.0;
+        for (int i = 0; i < NUM_ISLANDS; ++i) {
+            for (int j = i + 1; j < NUM_ISLANDS; ++j) {
+                maxDiff = std::max(maxDiff, std::abs(avgFitnesses[i] - avgFitnesses[j]));
+            }
+        }
+
+        if (maxDiff < 0.1) {
+            return;  // Skip migration if islands are too similar
+        }
+
         std::uniform_real_distribution<> dist(0.0, 1.0);
 
-        // Check and fix all runs
-        for (int i = 0; i < size; ++i) {
-            for (int j = 0; j < size; ++j) {
-                if (ind.board[i][j].isBlack) {
-                    // Check horizontal run
-                    if (ind.board[i][j].rightClue > 0 && dist(rng) < fixProbability) {
-                        adjustRunOrClue(ind.board, i, j, true, rng);
-                    }
-                    // Check vertical run
-                    if (ind.board[i][j].downClue > 0 && dist(rng) < fixProbability) {
-                        adjustRunOrClue(ind.board, i, j, false, rng);
-                    }
-                }
-            }
-        }
-    }
+        // Create copies of migrants before migration
+        std::vector<std::vector<Individual>> migrants(NUM_ISLANDS);
 
-    // tested in order to optimize for runs, did not help
-    std::vector<Run> analyzeRunLengths(const std::vector<std::vector<Cell>> &board) {
-        std::vector<Run> runs;
+        // First select migrants from each island
+        for (int sourceIsland = 0; sourceIsland < NUM_ISLANDS; ++sourceIsland) {
+            auto &source = islands[sourceIsland].population;
 
-        // Find horizontal runs
-        for (int i = 0; i < size; ++i) {
-            for (int j = 0; j < size; ++j) {
-                if (board[i][j].isBlack && board[i][j].rightClue > 0) {
-                    int length = 0;
-                    int k = j + 1;
-                    while (k < size && !board[i][k].isBlack) {
-                        length++;
-                        k++;
-                    }
-                    if (length > 0) {
-                        runs.emplace_back(i, j, length, true);
-                    }
-                }
-            }
-        }
+            // Sort by fitness
+            std::sort(source.begin(), source.end(),
+                      [](const Individual &a, const Individual &b) {
+                          return a.fitness > b.fitness;
+                      });
 
-        // Find vertical runs
-        for (int j = 0; j < size; ++j) {
-            for (int i = 0; i < size; ++i) {
-                if (board[i][j].isBlack && board[i][j].downClue > 0) {
-                    int length = 0;
-                    int k = i + 1;
-                    while (k < size && !board[k][j].isBlack) {
-                        length++;
-                        k++;
-                    }
-                    if (length > 0) {
-                        runs.emplace_back(i, j, length, false);
-                    }
-                }
-            }
-        }
-
-        return runs;
-    }
-
-    void optimizeRunLengths(std::vector<std::vector<Cell>> &board) {
-        auto runs = analyzeRunLengths(board);
-        std::uniform_real_distribution<> dist(0.0, 1.0);
-        std::uniform_int_distribution<> clueDist(1, 45);
-
-        for (const Run &run: runs) {
-            if (run.length > 4) {  // Too long, try to break it
-                if (run.horizontal) {
-                    int breakPoint = run.startY + 2 + (dist(rng) < 0.5 ? 0 : 1);
-                    if (breakPoint < size - 1) {
-                        // Insert black cell to break the run
-                        board[run.startX][breakPoint].isBlack = true;
-                        // Add new clue with 70% probability
-                        if (dist(rng) < 0.7) {
-                            board[run.startX][breakPoint].rightClue = clueDist(rng);
-                        }
-                    }
+            // Select individuals to migrate
+            for (int m = 0; m < MIGRATION_SIZE; ++m) {
+                int sourceIndex;
+                if (dist(rng) < MIGRATION_SELECTION_PRESSURE) {
+                    sourceIndex = m;  // Select from top individuals
                 } else {
-                    int breakPoint = run.startX + 2 + (dist(rng) < 0.5 ? 0 : 1);
-                    if (breakPoint < size - 1) {
-                        board[breakPoint][run.startY].isBlack = true;
-                        if (dist(rng) < 0.7) {
-                            board[breakPoint][run.startY].downClue = clueDist(rng);
-                        }
-                    }
+                    sourceIndex = std::uniform_int_distribution<>(
+                            0, source.size() - 1)(rng);
                 }
+                migrants[sourceIsland].push_back(source[sourceIndex]);
+            }
+        }
+
+        // Then perform migration using copies
+        for (int sourceIsland = 0; sourceIsland < NUM_ISLANDS; ++sourceIsland) {
+            int destIsland = (sourceIsland + 1) % NUM_ISLANDS;  // Ring topology
+            auto &dest = islands[destIsland].population;
+
+            // Replace worst individuals in destination
+            std::sort(dest.begin(), dest.end(),
+                      [](const Individual &a, const Individual &b) {
+                          return a.fitness < b.fitness;  // Sort ascending for replacement
+                      });
+
+            for (int m = 0; m < MIGRATION_SIZE; ++m) {
+                dest[m] = migrants[sourceIsland][m];
             }
         }
     }
+
+
+    void evolveIsland(Island &island, int generation) {
+        // Calculate population diversity for this island
+        double populationDiversity = calculatePopulationDiversity(island.population);
+
+        // Evaluate fitness
+#pragma omp parallel for
+        for (int i = 0; i < island.population.size(); ++i) {
+            double newFitness = calculateFitness(island.population[i]);
+            island.population[i].fitness = newFitness;
+
+#pragma omp critical
+            {
+                if (newFitness > island.bestFitness) {
+                    island.bestFitness = newFitness;
+                    island.bestIndividual = island.population[i];
+                    island.generationsWithoutImprovement = 0;
+                }
+            }
+        }
+
+        // Create new population
+        std::vector<Individual> newPopulation;
+
+        // Elitism
+        int eliteCount = std::max(1, static_cast<int>(
+                island.population.size() * 0.1 * (1.0 - populationDiversity)));
+
+        std::sort(island.population.begin(), island.population.end(),
+                  [](const Individual &a, const Individual &b) {
+                      return a.fitness > b.fitness;
+                  });
+
+        for (int i = 0; i < eliteCount; ++i) {
+            newPopulation.push_back(island.population[i]);
+        }
+
+        // Add diversity when needed - TODO: maybe adapt to islands, needs to be tested
+        /* double diversityThreshold = std::max(0.4, 0.1 * (1.0 - island.bestFitness));
+         if (populationDiversity < diversityThreshold) {
+             std::cout << "Low diversity detected (score: " << populationDiversity
+                       << ", threshold: " << diversityThreshold << ")" << std::endl;
+
+             int newRandomCount = populationSize / 10;  //
+             int addedCount = 0;
+             std::uniform_real_distribution<> dist(0.0, 1.0);
+
+             for (int i = 0; i < newRandomCount && newPopulation.size() < populationSize; ++i) {
+                 if (dist(rng) < 0.7) {  // 70% chance for semi-random
+                     // Create semi-random individual based on best
+                     Individual newInd = island.bestIndividual;  // Copy best
+                     heavyMutation(newInd);  // Apply aggressive mutations
+                     newPopulation.push_back(newInd);
+                     addedCount++;
+                 } else {  // 30% chance for completely random
+                     newPopulation.push_back(createRandomIndividual());
+                     addedCount++;
+                 }
+             }
+         }*/
+
+        // Fill rest with crossover and mutation
+        std::uniform_real_distribution<> dist(0.0, 1.0);
+        while (newPopulation.size() < island.population.size()) {
+            // Tournament selection
+            std::uniform_int_distribution<> select(0, island.population.size() - 1);
+            Individual &parent1 = island.population[select(rng)];
+            Individual &parent2 = island.population[select(rng)];
+
+            Individual child(size);
+            if (dist(rng) < island.crossoverRate) {
+                child = crossover(parent1, parent2);
+            } else {
+                child = dist(rng) < 0.5 ? parent1 : parent2;
+            }
+
+            if (dist(rng) < island.mutationRate) {
+                mutate(child, island.generationsWithoutImprovement, populationDiversity);
+            }
+
+            newPopulation.push_back(child);
+        }
+
+        island.population = std::move(newPopulation);
+        island.generationsWithoutImprovement++;
+
+        // Balance population size
+        balanceIslandSize(island);
+    }
+
+
+    void reinitializeIslandIfStuck(Island &island, int maxStagnantGenerations = 30) {
+        if (island.generationsWithoutImprovement > maxStagnantGenerations) {
+            std::cout << "Reinitializing stagnant island (no improvement for "
+                      << maxStagnantGenerations << " generations)\n";
+
+            // Keep best individual
+            Individual best = island.bestIndividual;
+
+            // Reinitialize with random individuals
+            for (auto &ind: island.population) {
+                ind = createRandomIndividual();
+                ind.fitness = calculateFitness(ind);
+            }
+
+            // Add back best individual
+            island.population[0] = best;
+            island.generationsWithoutImprovement = 0;
+        }
+    }
+
 
 public:
     KakuroGenerator(int
                     boardSize)
             : size(boardSize),
-              populationSize(80),
+              populationSize(120),
               mutationRate(0.1),
               targetFitness(0.83),
               rng(std::random_device{}()) {
     }
 
+
     std::vector<std::vector<Cell>> generateBoard(int maxGenerations = 2000, int maxTimeSeconds = 300) {
         auto startTime = std::chrono::steady_clock::now();
 
-        // Initialize population
-        std::vector<Individual> population;
-        for (int i = 0; i < populationSize; ++i) {
-            population.push_back(createRandomIndividual());
-        }
+        // Initialize islands
+        initializeIslands();
 
         // Main evolution loop
         int generation = 0;
-        Individual bestIndividual(size);
-        double bestFitness = 0.0;
+        Individual globalBest(size);
+        double globalBestFitness = 0.0;
 
         while (generation < maxGenerations) {
-
-
-            // Evaluate fitness
+            // Evolve each island
 #pragma omp parallel for
-            for (int i = 0; i < populationSize; ++i) {
-                population[i].fitness = calculateFitness(population[i]);
+            for (int i = 0; i < NUM_ISLANDS; ++i) {
+                if (islands[i].population.empty()) {
+                    std::cout << "Warning: Island " << i << " has empty population!\n";
+                    continue;
+                }
+                evolveIsland(islands[i], generation);
+                reinitializeIslandIfStuck(islands[i]);
             }
 
-            // Find best individual
-            auto bestIt = std::max_element(population.begin(), population.end(),
-                                           [](const Individual &a, const Individual &b) {
-                                               return a.fitness < b.fitness;
-                                           });
-            double avgFitnessOutput = 0;
-
-            //debug output
-            for (int i = 0; i < population.size(); ++i) {
-                avgFitnessOutput += population[i].fitness;
-            }
-            avgFitnessOutput /= population.size();
-
-            std::cout << "Generation " << generation << ": Best fitness overall = "
-                      << bestFitness << " - Best fitness this run: " << bestIt->fitness << " - AVG fitness " << avgFitnessOutput << "\n";
-
-
-
-            // found new better fitness
-            if (bestIt->fitness > bestFitness) {
-                bestFitness = bestIt->fitness;
-                bestIndividual = *bestIt;
-                std::cout << "Generation " << generation << ": Best fitness = "
-                          << bestFitness << "\n";
+            // Perform migration if needed
+            if (generation % MIGRATION_INTERVAL == 0 && generation > 0) {
+                performMigration();
             }
 
-            if (bestFitness >= targetFitness) {
+
+            //Migration debug output
+            for (const auto &island: islands) {
+                double islandPopSize = island.population.size();
+                double islandAvgFitness = 0.0;
+                for (const auto &ind: island.population) {
+                    islandAvgFitness += ind.fitness;
+                }
+
+                islandAvgFitness /= islandPopSize;
+                //std::cout << "Island avg fitness: " << islandAvgFitness<<"\n";
+                //<< " - Island pop size: " << std::to_string(islandPopSize) << "\n";
+            }
+
+            // Update global best
+            for (const auto &island: islands) {
+                if (island.bestFitness > globalBestFitness) {
+                    globalBestFitness = island.bestFitness;
+                    globalBest = island.bestIndividual;
+                    std::cout << "Generation " << generation << ": New best fitness = "
+                              << globalBestFitness << " (Island "
+                              << &island - &islands[0] << ")\n";
+                }
+            }
+
+            // Calculate and output statistics
+            double avgFitness = 0.0;
+            int totalPopulation = 0;
+            for (const auto &island: islands) {
+                for (const auto &ind: island.population) {
+                    avgFitness += ind.fitness;
+                    totalPopulation++;
+                }
+            }
+            avgFitness /= totalPopulation;
+
+            // Calculate global diversity
+            std::vector<Individual> combinedPop;
+            for (const auto &island: islands) {
+                combinedPop.insert(combinedPop.end(),
+                                   island.population.begin(),
+                                   island.population.end());
+            }
+            double globalDiversity = calculatePopulationDiversity(combinedPop);
+
+            std::cout << "Generation " << generation
+                      << ": Best fitness overall = " << globalBestFitness
+                      << " - AVG fitness " << avgFitness
+                      << " - Diversity " << globalDiversity << "\n";
+
+            if (globalBestFitness >= targetFitness) {
                 std::cout << "Target fitness reached after " << generation << " generations\n";
+                printBoard(globalBest.board);
                 KakuroSolver solver(size);
-                SolveResult result = solver.solveBoard(bestIndividual.board);
+                SolveResult result = solver.solveBoard(globalBest.board);
                 if (result == SolveResult::UNIQUE_SOLUTION) break;
+                globalBestFitness = 0;
+                globalBest = Individual(size);
             }
 
-            // Track improvement
-            static int generationsWithoutImprovement = 0;
-            static double lastBestFitness = 0.0;
-
-            if (bestFitness > lastBestFitness) {
-                generationsWithoutImprovement = 0;
-                lastBestFitness = bestFitness;
-            } else {
-                generationsWithoutImprovement++;
-            }
-
-
-            /*
-             * //Note: didn'T work as expected
-             * //force population updates if very many bad boards exist
-             *   int veryBadFitnessCount = 0;
-
-            //std::cout << "current boards " << std::endl;
-            for (int i = 0; i < population.size(); ++i) {
-                if (population[i].fitness < 0.4) veryBadFitnessCount++;
-                //debugoutput
-                //printBoard(population[i].board);
-            }
-
-            if ((veryBadFitnessCount > populationSize / 2) && generationsWithoutImprovement % 5 == 0) {
-                int third = (populationSize/2);
-                int count = 0;
-                for (int i = 0; i < populationSize; ++i) {
-                    if (population[i].fitness <= 0.2 && count <= third) {
-                        population[i] = createRandomIndividual();
-                        count ++;
-                    } else if (count >=third) {
-                        break;
-                    }
-                }
-                std::cout << "replaced " << (populationSize / 3) << " elements in population" << std::endl;
-            }*/
-
-            // Restart mechanism if stuck
-            if (generationsWithoutImprovement > 40) {
-                std::cout << "Stagnation detected, performing restart at generation " << generation << "\n";
-                // Keep best individual
-                Individual bestInd = *bestIt;
-
-                // Reinitialize population
-                for (int i = 1; i < populationSize; ++i) {
-                    population[i] = createRandomIndividual();
-                }
-                // Keep best from previous run
-                population[0] = bestInd;
-
-                generationsWithoutImprovement = 0;
-                continue;
-            }
-
-
-            // Create new population
-            std::vector<Individual> newPopulation;
-
-            // Calculate population diversity
-            double diversityScore = 0.0;
-            for (const auto& ind : population) {
-                diversityScore += std::abs(ind.fitness - avgFitnessOutput);
-            }
-            diversityScore /= populationSize;
-
-            // Adjust elite count based on diversity
-            int baseEliteCount = populationSize / 10;
-            int eliteCount = std::max(1, static_cast<int>(baseEliteCount * (1.0 - diversityScore)));
-
-            // Sort by fitness
-            std::sort(population.begin(), population.end(),
-                      [](const Individual& a, const Individual& b) {
-                          return a.fitness > b.fitness;
-                      });
-
-            // Elitism with diversity preservation
-            for (int i = 0; i < eliteCount; ++i) {
-                newPopulation.push_back(population[i]);
-            }
-
-            // Add diversity when needed
-            double diversityThreshold = std::max(0.05, 0.1 * (1.0 - bestFitness));
-            if (diversityScore < diversityThreshold) {
-                std::cout << "Low diversity detected (score: " << diversityScore
-                          << ", threshold: " << diversityThreshold << ")" << std::endl;
-
-                int newRandomCount = populationSize / 10;  // 10% of population
-                int addedCount = 0;
-                std::uniform_real_distribution<> dist(0.0, 1.0);
-
-                for (int i = 0; i < newRandomCount && newPopulation.size() < populationSize; ++i) {
-                    if (dist(rng) < 0.7) {  // 70% chance for semi-random
-                        // Create semi-random individual based on best
-                        Individual newInd = population[0];  // Copy best
-                        heavyMutation(newInd);  // Apply aggressive mutations
-                        newPopulation.push_back(newInd);
-                        addedCount++;
-                    } else {  // 30% chance for completely random
-                        newPopulation.push_back(createRandomIndividual());
-                        addedCount++;
-                    }
-                }
-                std::cout << "Added " << addedCount << " new individuals ("
-                          << int(addedCount * 0.7) << " semi-random, "
-                          << int(addedCount * 0.3) << " completely random)" << std::endl;
-            }
-
-            // Add some random new individuals, if moderate stagnation
-            if (generationsWithoutImprovement > 25) {
-                int newRandomCount = populationSize / 3; // 30 % new random individuals to freshen population
-                std::cout << "25 gens without improvement: create " << newRandomCount
-                          << " new individuals to freshen population" << std::endl;
-                for (int i = 0; i < newRandomCount; ++i) {
-                    newPopulation.push_back(createRandomIndividual());
-                }
-                generationsWithoutImprovement = 0;
-            }
-
-            // Fill rest with crossover and mutation
-            while (newPopulation.size() < populationSize) {
-                // Tournament selection
-                std::uniform_int_distribution<> select(0, populationSize - 1);
-                Individual &parent1 = population[select(rng)];
-                Individual &parent2 = population[select(rng)];
-
-                Individual child = crossover(parent1, parent2);
-                if (generationsWithoutImprovement == 18) {
-                    constraintGuidedMutation(child, generationsWithoutImprovement);
-                }
-                mutate(child, generationsWithoutImprovement);
-                newPopulation.push_back(child);
-            }
-
-            population = std::move(newPopulation);
             generation++;
         }
 
-        return bestIndividual.board;
+        return globalBest.board;
     }
 };
