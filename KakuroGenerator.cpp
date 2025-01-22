@@ -1110,6 +1110,7 @@ private:
         double mutationRate;  // Island-specific mutation rate
         double crossoverRate; // Island-specific crossover rate
         int generationsWithoutImprovement;
+        double selectionPressure;
 
         Island(int size, int popSize) :
                 population(popSize, Individual(size)),
@@ -1121,12 +1122,12 @@ private:
     };
 
     // Configuration for island model
-    static const int NUM_ISLANDS = 6;
-    static const int MIGRATION_INTERVAL = 25;
-    static const int MIGRATION_SIZE = 2;
-    static const int MIN_ISLAND_SIZE = 15;
-    static const int OPTIMAL_ISLAND_SIZE = 20;
-    const double MIGRATION_SELECTION_PRESSURE = 0.8;
+    static const int NUM_ISLANDS = 5;
+    static const int MIGRATION_INTERVAL = 15;
+    static const int MIGRATION_SIZE = 4;
+    static const int MIN_ISLAND_SIZE = 18;
+    static const int OPTIMAL_ISLAND_SIZE = 25;
+    const double MIGRATION_SELECTION_PRESSURE = 0.6;
 
     std::vector<Island> islands;
 
@@ -1211,68 +1212,84 @@ private:
     }
 
     void performMigration() {
-        // Check if migration is worthwhile
+        // Calculate average fitness of each island
         std::vector<double> avgFitnesses(NUM_ISLANDS);
         for (int i = 0; i < NUM_ISLANDS; ++i) {
             avgFitnesses[i] = calculateAverageIslandFitness(islands[i]);
         }
 
-        double maxDiff = 0.0;
+        // Find best and worst islands
+        int bestIsland = std::max_element(avgFitnesses.begin(), avgFitnesses.end()) - avgFitnesses.begin();
+
+        // Migrate from best island to others based on fitness difference
         for (int i = 0; i < NUM_ISLANDS; ++i) {
-            for (int j = i + 1; j < NUM_ISLANDS; ++j) {
-                maxDiff = std::max(maxDiff, std::abs(avgFitnesses[i] - avgFitnesses[j]));
-            }
-        }
+            if (i == bestIsland) continue;
 
-        if (maxDiff < 0.1) {
-            return;  // Skip migration if islands are too similar
-        }
+            // More migration to worse islands
+            int migrationCount = std::min(5, static_cast<int>(
+                    (avgFitnesses[bestIsland] - avgFitnesses[i]) * 10));
 
-        std::uniform_real_distribution<> dist(0.0, 1.0);
-
-        // Create copies of migrants before migration
-        std::vector<std::vector<Individual>> migrants(NUM_ISLANDS);
-
-        // First select migrants from each island
-        for (int sourceIsland = 0; sourceIsland < NUM_ISLANDS; ++sourceIsland) {
-            auto &source = islands[sourceIsland].population;
-
-            // Sort by fitness
-            std::sort(source.begin(), source.end(),
-                      [](const Individual &a, const Individual &b) {
-                          return a.fitness > b.fitness;
-                      });
-
-            // Select individuals to migrate
-            for (int m = 0; m < MIGRATION_SIZE; ++m) {
-                int sourceIndex;
-                if (dist(rng) < MIGRATION_SELECTION_PRESSURE) {
-                    sourceIndex = m;  // Select from top individuals
-                } else {
-                    sourceIndex = std::uniform_int_distribution<>(
-                            0, source.size() - 1)(rng);
-                }
-                migrants[sourceIsland].push_back(source[sourceIndex]);
-            }
-        }
-
-        // Then perform migration using copies
-        for (int sourceIsland = 0; sourceIsland < NUM_ISLANDS; ++sourceIsland) {
-            int destIsland = (sourceIsland + 1) % NUM_ISLANDS;  // Ring topology
-            auto &dest = islands[destIsland].population;
-
-            // Replace worst individuals in destination
-            std::sort(dest.begin(), dest.end(),
-                      [](const Individual &a, const Individual &b) {
-                          return a.fitness < b.fitness;  // Sort ascending for replacement
-                      });
-
-            for (int m = 0; m < MIGRATION_SIZE; ++m) {
-                dest[m] = migrants[sourceIsland][m];
+            if (migrationCount > 0) {
+                migrateIndividuals(islands[bestIsland], islands[i], migrationCount);
             }
         }
     }
 
+    void migrateIndividuals(Island& sourceIsland, Island& destIsland, int count) {
+        std::uniform_real_distribution<> dist(0.0, 1.0);
+
+        //TODO: test if more random boards improve convergence
+        /*if (calculatePopulationDiversity(destIsland.population) < 0.1) {
+            count = std::min(count * 2, static_cast<int>(destIsland.population.size() * 0.3));
+        }
+
+        int randomCount = count / 3;  // 1/3 of migrants should be random
+        for (int i = 0; i < randomCount; i++) {
+            destIsland.population[i] = createRandomIndividual();
+        }*/
+
+        // Sort source population by fitness
+        std::sort(sourceIsland.population.begin(), sourceIsland.population.end(),
+                  [](const Individual& a, const Individual& b) {
+                      return a.fitness > b.fitness;
+                  });
+
+        // Sort destination population by fitness (ascending to find worst individuals)
+        std::sort(destIsland.population.begin(), destIsland.population.end(),
+                  [](const Individual& a, const Individual& b) {
+                      return a.fitness < b.fitness;
+                  });
+
+        // Select and migrate individuals
+        for (int i = 0; i < count; ++i) {
+            // Select individual from source (bias towards better individuals)
+            int sourceIndex;
+            if (dist(rng) < MIGRATION_SELECTION_PRESSURE) {
+                sourceIndex = i;  // Take from top individuals
+            } else {
+                sourceIndex = std::uniform_int_distribution<>(
+                        0, sourceIsland.population.size() / 2)(rng);  // Take from top half
+            }
+
+            // Replace worst individual in destination
+            if (i < destIsland.population.size()) {
+                destIsland.population[i] = sourceIsland.population[sourceIndex];
+            }
+        }
+    }
+
+    void adaptSelectionPressure(Island& island) {
+        double avgFitness = calculateAverageIslandFitness(island);
+        double bestFitness = island.bestFitness;
+
+        // If average is too far from best, reduce pressure to explore more
+        double fitnessGap = bestFitness - avgFitness;
+        if (fitnessGap > 0.4) {
+            island.selectionPressure = std::max(0.6, island.selectionPressure - 0.05);
+        } else {
+            island.selectionPressure = std::min(0.9, island.selectionPressure + 0.05);
+        }
+    }
 
     void evolveIsland(Island &island, int generation) {
         // Calculate population diversity for this island
@@ -1294,6 +1311,9 @@ private:
             }
         }
 
+        // Adapt selection pressure based on population state
+        adaptSelectionPressure(island);
+
         // Create new population
         std::vector<Individual> newPopulation;
 
@@ -1310,37 +1330,62 @@ private:
             newPopulation.push_back(island.population[i]);
         }
 
-        // Add diversity when needed - TODO: maybe adapt to islands, needs to be tested
-        /* double diversityThreshold = std::max(0.4, 0.1 * (1.0 - island.bestFitness));
-         if (populationDiversity < diversityThreshold) {
-             std::cout << "Low diversity detected (score: " << populationDiversity
-                       << ", threshold: " << diversityThreshold << ")" << std::endl;
+        //add diversity if needed
+        if (generation % 10 == 0 && (populationDiversity < 0.2)) {
+            int injectCount = island.population.size() * 0.1;
+            for (int i = 0; i < injectCount; i++) {
+                int replaceIdx = island.population.size() - 1 - i;
+                island.population[replaceIdx] = createRandomIndividual();
+            }
+        }
 
-             int newRandomCount = populationSize / 10;  //
-             int addedCount = 0;
-             std::uniform_real_distribution<> dist(0.0, 1.0);
+        // Emergency diversity injection - not tested for longer time yet
+        if (populationDiversity < 0.05) {  // Critical diversity threshold
+            int injectCount = island.population.size() / 3;  // Inject 33% new individuals
+            std::vector<Individual> bestOnes;
 
-             for (int i = 0; i < newRandomCount && newPopulation.size() < populationSize; ++i) {
-                 if (dist(rng) < 0.7) {  // 70% chance for semi-random
-                     // Create semi-random individual based on best
-                     Individual newInd = island.bestIndividual;  // Copy best
-                     heavyMutation(newInd);  // Apply aggressive mutations
-                     newPopulation.push_back(newInd);
-                     addedCount++;
-                 } else {  // 30% chance for completely random
-                     newPopulation.push_back(createRandomIndividual());
-                     addedCount++;
-                 }
-             }
-         }*/
+            // Keep best 33%
+            std::sort(island.population.begin(), island.population.end(),
+                      [](const Individual& a, const Individual& b) {
+                          return a.fitness > b.fitness;
+                      });
+
+            for (int i = 0; i < injectCount; i++) {
+                bestOnes.push_back(island.population[i]);
+            }
+
+            // Reset population
+            island.population.clear();
+
+            // Add back best ones
+            for (const auto& ind : bestOnes) {
+                island.population.push_back(ind);
+            }
+
+            // Add varied new individuals
+            while (island.population.size() < OPTIMAL_ISLAND_SIZE) {
+                if (island.population.size() % 3 == 0) {
+                    island.population.push_back(createRandomIndividual());
+                } else {
+                    Individual newInd = bestOnes[0];
+                    heavyMutation(newInd);
+                    island.population.push_back(newInd);
+                }
+            }
+        }
 
         // Fill rest with crossover and mutation
         std::uniform_real_distribution<> dist(0.0, 1.0);
         while (newPopulation.size() < island.population.size()) {
             // Tournament selection
             std::uniform_int_distribution<> select(0, island.population.size() - 1);
-            Individual &parent1 = island.population[select(rng)];
-            Individual &parent2 = island.population[select(rng)];
+            //Individual &parent1 = island.population[select(rng)];
+            //Individual &parent2 = island.population[select(rng)];
+
+            // Tournament selection with adaptive pressure
+            Individual parent1 = selectParent(island, island.selectionPressure);
+            Individual parent2 = selectParent(island, island.selectionPressure);
+
 
             Individual child(size);
             if (dist(rng) < island.crossoverRate) {
@@ -1363,33 +1408,58 @@ private:
         balanceIslandSize(island);
     }
 
+    Individual selectParent(const Island& island, double selectionPressure) {
+        std::uniform_real_distribution<> dist(0.0, 1.0);
+        std::uniform_int_distribution<> select(0, island.population.size() - 1);
 
-    void reinitializeIslandIfStuck(Island &island, int maxStagnantGenerations = 30) {
+        // Tournament selection with adaptive size
+        int tournamentSize = std::max(2, static_cast<int>(
+                island.population.size() * selectionPressure * 0.2));
+
+        Individual best = island.population[select(rng)];
+        for (int i = 1; i < tournamentSize; i++) {
+            Individual competitor = island.population[select(rng)];
+            if (competitor.fitness > best.fitness) {
+                best = competitor;
+            }
+        }
+
+        return best;
+    }
+
+    void reinitializeIslandIfStuck(Island& island, int maxStagnantGenerations = 30) {
         if (island.generationsWithoutImprovement > maxStagnantGenerations) {
-            std::cout << "Reinitializing stagnant island (no improvement for "
-                      << maxStagnantGenerations << " generations)\n";
+            // Sort population by fitness
+            std::sort(island.population.begin(), island.population.end(),
+                      [](const Individual& a, const Individual& b) {
+                          return a.fitness > b.fitness;
+                      });
 
-            // Keep best individual
-            Individual best = island.bestIndividual;
+            // Keep top 30% unchanged
+            int eliteCount = island.population.size() * 0.3;
 
-            // Reinitialize with random individuals
-            for (auto &ind: island.population) {
-                ind = createRandomIndividual();
-                ind.fitness = calculateFitness(ind);
+            // For middle 40%, create variations of elite
+            int middleCount = island.population.size() * 0.4;
+            for (int i = eliteCount; i < eliteCount + middleCount; i++) {
+                Individual newInd = island.population[i % eliteCount];
+                mutate(newInd, 0, 0.5);  // Medium mutation
+                island.population[i] = newInd;
             }
 
-            // Add back best individual
-            island.population[0] = best;
+            // Bottom 30% completely random
+            for (int i = eliteCount + middleCount; i < island.population.size(); i++) {
+                island.population[i] = createRandomIndividual();
+            }
+
             island.generationsWithoutImprovement = 0;
         }
     }
-
 
 public:
     KakuroGenerator(int
                     boardSize)
             : size(boardSize),
-              populationSize(120),
+              populationSize(125),
               mutationRate(0.1),
               targetFitness(0.83),
               rng(std::random_device{}()) {
