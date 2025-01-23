@@ -436,6 +436,30 @@ private:
     const double targetFitness;
     std::mt19937 rng;
 
+    struct Run {
+        int startX, startY;
+        int endX, endY;
+        bool horizontal;
+
+        Run(int x, int y, bool h) : startX(x), startY(y), horizontal(h) {}
+
+        Run(int sx, int sy, int ex, int ey, bool h)
+                : startX(sx), startY(sy), endX(ex), endY(ey), horizontal(h) {}
+    };
+
+    //helper struct to evaluate fitness
+    struct FitnessComponents {
+        double basicValidity;
+        double runQuality;
+        double clueDistribution;
+        double solvability;
+
+        FitnessComponents() : basicValidity(0), runQuality(0),
+                              clueDistribution(0),
+                              solvability(0) {}
+    };
+
+
 
     // Check basic board constraints
     double checkBasicValidity(const std::vector<std::vector<Cell>> &board) {
@@ -466,10 +490,6 @@ private:
         }
 
         if (totalWhiteCells == 0) return 0.0; // All black board
-
-        // Calculate percentage of white cells that are part of runs
-        double runCoverage = static_cast<double>(whiteCellsInRuns) / totalWhiteCells;
-        score += 0.3 * runCoverage;
 
         // Check for valid clue placement (min two cells per clue)
         int validClues = 0;
@@ -503,10 +523,6 @@ private:
             }
         }
 
-        if (totalClues > 0) {
-            score += 0.3 * (static_cast<double>(validClues) / totalClues);
-        }
-
         // Check for isolated white cells
         int connectedWhiteCells = 0;
         for (int i = 0; i < size; ++i) {
@@ -521,10 +537,6 @@ private:
                     if (hasConnection) connectedWhiteCells++;
                 }
             }
-        }
-
-        if (totalWhiteCells > 0) {
-            score += 0.3 * (static_cast<double>(connectedWhiteCells) / totalWhiteCells);
         }
 
         // Check for boxed-in clues
@@ -545,6 +557,21 @@ private:
             }
         }
 
+
+        // Calculate percentage of white cells that are part of runs
+        whiteCellsInRuns = std::min(whiteCellsInRuns, totalWhiteCells);
+        double runCoverage = static_cast<double>(whiteCellsInRuns) / totalWhiteCells;
+        score += 0.3 * runCoverage;
+
+        if (totalClues > 0) {
+            score += 0.3 * (static_cast<double>(validClues) / totalClues);
+        }
+
+        if (totalWhiteCells > 0) {
+            score += 0.3 * (static_cast<double>(connectedWhiteCells) / totalWhiteCells);
+        }
+
+
         if (boxedClues > 0) {
             score += 0.1 * (static_cast<double>(boxedClues) / totalClues);
         }
@@ -552,28 +579,6 @@ private:
         return score;
     }
 
-    struct Run {
-        int startX, startY;
-        int endX, endY;
-        bool horizontal;
-
-        Run(int x, int y, bool h) : startX(x), startY(y), horizontal(h) {}
-
-        Run(int sx, int sy, int ex, int ey, bool h)
-                : startX(sx), startY(sy), endX(ex), endY(ey), horizontal(h) {}
-    };
-
-    //helper struct to evaluate fitness
-    struct FitnessComponents {
-        double basicValidity;
-        double runQuality;
-        double clueDistribution;
-        double solvability;
-
-        FitnessComponents() : basicValidity(0), runQuality(0),
-                              clueDistribution(0),
-                              solvability(0) {}
-    };
 
     // fitness calculation helper function
     double calculateRunQualityScore(const std::vector<std::vector<Cell>> &board) {
@@ -597,11 +602,11 @@ private:
 
                     // Score based on run length ((2-4 cells is ideal for most puzzles, higher makes it exponentially harder)
                     if (runLength >= 2 && runLength <= 4) {
-                        score += 2.0;  // Optimal length
+                        score += 1.0;  // Optimal length
                     } else if (runLength > 4 && runLength <= 6) {
-                        score += 0.5;  // Acceptable but not ideal
+                        score += 0.25;  // Acceptable but not ideal
                     } else if (runLength > 6) {
-                        score -= 0.5;  // Penalize very long runs
+                        score -= 0.25;  // Penalize very long runs
                     }
 
                     // Validate and score clue values
@@ -610,15 +615,15 @@ private:
                     int maxPossible = runLength * 9 - (runLength * (runLength - 1)) / 2;
 
                     if (clue >= minPossible && clue <= maxPossible) {
-                        score += 1.0;
+                        score += 0.5;
                         // Bonus for interesting sums (not min/max)
                         int range = maxPossible - minPossible;
                         int margin = range / 4;
                         if (clue > minPossible + margin && clue < maxPossible - margin) {
-                            score += 0.5;
+                            score += 0.25;
                         }
                     } else {
-                        score -= 1.0;  // Penalty for invalid clues
+                        score -= 0.5;  // Penalty for invalid clues
                     }
                 }
             }
@@ -639,11 +644,11 @@ private:
                     lengthFrequency[runLength]++;
 
                     if (runLength >= 2 && runLength <= 4) {
-                        score += 2.0;
+                        score += 1.0;
                     } else if (runLength > 4 && runLength <= 6) {
-                        score += 0.5;
+                        score += 0.25;
                     } else if (runLength > 6) {
-                        score -= 0.5;
+                        score -= 0.25;
                     }
 
                     int clue = board[i][j].downClue;
@@ -651,14 +656,14 @@ private:
                     int maxPossible = runLength * 9 - (runLength * (runLength - 1)) / 2;
 
                     if (clue >= minPossible && clue <= maxPossible) {
-                        score += 1.0;
+                        score += 0.5;
                         int range = maxPossible - minPossible;
                         int margin = range / 4;
                         if (clue > minPossible + margin && clue < maxPossible - margin) {
-                            score += 0.5;
+                            score += 0.25;
                         }
                     } else {
-                        score -= 1.0;
+                        score -= 0.5;
                     }
                 }
             }
@@ -680,7 +685,7 @@ private:
             }
         }
 
-        return totalRuns > 0 ? score / (totalRuns * 2.0) : 0.0;
+        return  std::min(1.0, totalRuns > 0 ? score / totalRuns : 0.0);
     }
 
 
@@ -792,7 +797,7 @@ private:
             score += (static_cast<double>(connectedWhiteCells) / totalWhiteCells) * 0.35;
         }
         // Score based on clue connectivity
-        if (totalWhiteCells > 0) {
+        if (clues > 0) {
             score += (static_cast<double>(isolatedClue) / clues) * 0.35;
         }
 
@@ -1681,22 +1686,25 @@ public:
                               << globalBestFitness << " (Island "
                               << &island - &islands[0] << ")\n";
 
-                    KakuroSolver solver(size);
 
-                    // Copy board configuration to solver
-                    for (int i = 0; i < size; ++i) {
-                        for (int j = 0; j < size; ++j) {
-                            solver.setCell(i, j,
-                                           globalBest.board[i][j].isBlack,
-                                           globalBest.board[i][j].downClue,
-                                           globalBest.board[i][j].rightClue);
-                        }
-                    }
                     printBoard(globalBest.board);
 
                     if (globalBestFitness >= targetFitness) {
                         std::cout << "Target fitness reached after " << generation << " generations\n";
                         std::vector<std::vector<Cell>> solution;
+                        KakuroSolver solver(size);
+
+                        // Copy board configuration to solver
+                        for (int i = 0; i < size; ++i) {
+                            for (int j = 0; j < size; ++j) {
+                                solver.setCell(i, j,
+                                               globalBest.board[i][j].isBlack,
+                                               globalBest.board[i][j].downClue,
+                                               globalBest.board[i][j].rightClue);
+                            }
+                        }
+                        solver.printInitialBoard();
+
                         SolveResult result = solver.solveBoard(solution);
                         if (result == SolveResult::UNIQUE_SOLUTION) return globalBest.board;
                         std::string text;
