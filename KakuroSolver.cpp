@@ -1,7 +1,3 @@
-//
-// Created by Theresa on 19.01.2025.
-//
-
 #include "KakuroSolver.h"
 
 void KakuroSolver::precomputeSumCombinations() {
@@ -150,7 +146,7 @@ void KakuroSolver::debugPrintAllRuns() const {
 }
 
 
-void KakuroSolver::identifyRuns() {
+void KakuroSolver:: identifyRuns() {
     runs.clear();
     //std::cout << "\nIdentifying runs...\n";
 
@@ -167,7 +163,7 @@ void KakuroSolver::identifyRuns() {
                 }
                 run.length = run.cells.size();
                 run.isHorizontal = true;
-                if (run.length > 0) {
+                if (run.length >= 2) {
                     runs.push_back(run);
                     /*std::cout << "Found horizontal run at (" << i << "," << j
                               << ") sum=" << run.sum << " length=" << run.length
@@ -194,7 +190,7 @@ void KakuroSolver::identifyRuns() {
                 }
                 run.length = run.cells.size();
                 run.isHorizontal = false;
-                if (run.length > 0) {
+                if (run.length >= 2) {
                     runs.push_back(run);
                     /*std::cout << "Found vertical run at (" << i << "," << j
                               << ") sum=" << run.sum << " length=" << run.length
@@ -250,7 +246,7 @@ bool KakuroSolver::isValidBoard() const {
                 }
 
                 if (!hasHorizontalClue || !hasVerticalClue) {
-                    /*std::cout << "Cell at (" << i << "," << j
+                    /*std::cout << "Cell at (" << i << "," << j << " value: " << board[i][j].value
                               << ") missing clue(s). Horizontal: " << hasHorizontalClue
                               << ", Vertical: " << hasVerticalClue << std::endl;*/
                     return false;
@@ -280,8 +276,8 @@ bool KakuroSolver::isValidBoard() const {
         for (int j = 0; j < size; j++) {
             if (!board[i][j].isBlack) {
                 if (!cellInRun[i][j].first || !cellInRun[i][j].second) {
-                    /*std::cout << "Cell at (" << i << "," << j
-                              << ") not part of both horizontal and vertical runs" << std::endl;*/
+                    /*std::cout << "Cell at (" << i << "," << j << " value: " << board[i][j].value
+                                << ") not part of both horizontal and vertical runs" << std::endl;*/
                     return false;
                 }
             }
@@ -342,12 +338,6 @@ bool KakuroSolver::isValuePossibleAtPosition(int x, int y, int value) {
 
 
 SolveResult KakuroSolver::solve(int runIndex, std::vector<std::vector<Cell>> &solution) {
-    // First validate the board structure before attempting to solve
-    if (runIndex == 0 && !isValidBoard()) {
-        //std::cout << "Invalid board structure detected\n";
-        return SolveResult::NO_SOLUTION;
-    }
-
     if (!isValidRunLengths()) {
         //std::cout << " runs not valid in length" << std::endl;
         return SolveResult::NO_SOLUTION;
@@ -379,7 +369,6 @@ SolveResult KakuroSolver::solve(int runIndex, std::vector<std::vector<Cell>> &so
         //printBoard();
 
         if (solutionCount == 1) {
-            solution = board;
             return SolveResult::UNIQUE_SOLUTION;  // Keep searching to verify uniqueness
         }
         return SolveResult::MULTIPLE_SOLUTIONS;  // Found more than one solution
@@ -474,7 +463,6 @@ bool KakuroSolver::isValidRunLengths() const {
 }
 
 KakuroSolver::KakuroSolver(int boardSize) : size(boardSize) {
-    //std::cout << "Initializing " << boardSize << "x" << boardSize << " board\n";
     // Initialize all cells as black by default
     board = std::vector<std::vector<Cell>>(size, std::vector<Cell>(size, Cell(true)));
     precomputeSumCombinations();
@@ -535,6 +523,12 @@ Cell KakuroSolver::getCell(int x, int y) {
 SolveResult KakuroSolver::solveBoard(std::vector<std::vector<Cell>> &solution) {
     identifyRuns();
     //debugPrintAllRuns();
+
+    // First validate the board structure before attempting to solve
+    if (!isValidBoard()) {
+        //std::cout << "Invalid board structure detected\n";
+        return SolveResult::INVALID_BOARD;
+    }
 
     // Sort runs by constraint level (fewer possibilities first)
     std::sort(runs.begin(), runs.end(), [this](const Run &a, const Run &b) {

@@ -1,7 +1,3 @@
-//
-// Created by Theresa on 19.01.2025.
-//
-
 #include <iostream>
 #include <vector>
 #include <unordered_map>
@@ -39,6 +35,7 @@ struct Run {
 
 
 enum class SolveResult {
+    INVALID_BOARD,
     NO_SOLUTION,
     UNIQUE_SOLUTION,
     MULTIPLE_SOLUTIONS
@@ -65,7 +62,7 @@ private:
     std::vector <std::vector<int>> getPossibleValues(const Run &run);
     void identifyRuns();
     bool isSolutionComplete() const;
-
+    bool isValidBoard() const;
     SolveResult solve(int runIndex, std::vector <std::vector<Cell>> &solution);
 
     void debugPrintRun(const Run& run) const ;
@@ -73,7 +70,7 @@ private:
 
 public:
     KakuroSolver(int boardSize);
-    bool isValidBoard() const;
+
     void writeToFile(const std::string &filename, std::vector<std::vector<Cell>> solution) const;
 
     static KakuroSolver readFromFile(const std::string &filename) {
@@ -85,9 +82,6 @@ public:
         // Read dimensions
         int rows, cols;
         inFile >> rows >> cols;
-        if (rows != cols) {
-            //throw std::runtime_error("Non-square board dimensions not supported");
-        }
 
         // Skip the rest of the first line
         std::string dummy;
