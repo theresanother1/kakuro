@@ -3,4 +3,6 @@
 kakuro.exe
 kakurotest.exe
 kakuro_main.o
-/.idea
+
+.idea
+CMakeLists.txt
