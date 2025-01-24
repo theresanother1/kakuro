@@ -1530,8 +1530,11 @@ private:
                       return a.fitness > b.fitness;
                   });
 
-        for (int i = 0; i < eliteCount; ++i) {
-            newPopulation.push_back(island.population[i]);
+        //only allow elitism when improving, more randomness wanted when not improving
+        if (island.generationsWithoutImprovement < 5) {
+            for (int i = 0; i < eliteCount; ++i) {
+                newPopulation.push_back(island.population[i]);
+            }
         }
 
         //add diversity if needed
