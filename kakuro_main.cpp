@@ -72,47 +72,56 @@ void solveCreatedKakuroCheck(std::string &filename, std::string &solutionFilenam
 }
 
 
-int main(int argc, char *argv[]){
-    if (argc == 1) {
-        std::string file = "old_files/initial_test_6x6.ka";
-        std::string second = "old_files/board_5x5.kakuro";
+int main(int argc, char *argv[]) {
+    try {
+        if (argc == 1) {
+            std::string file = "old_files/initial_test_6x6.ka";
+            std::string second = "old_files/board_5x5.kakuro";
 
-        solveCreatedKakuroCheck(file, file);
-        solveCreatedKakuroCheck(second, file);
+            solveCreatedKakuroCheck(file, file);
+            //solveCreatedKakuroCheck(second, file);
 
 
-        int run = 2;
-        SolveResult result = SolveResult::NO_SOLUTION;
+            int run = 2;
+            SolveResult result = SolveResult::NO_SOLUTION;
 
-        for (int size = 5; size <= 20; ++size) {
+            for (int size = 5; size <= 20; ++size) {
 
-            KakuroBoard boardTest(size, size);
-            boardTest.generateBoard();
-            std::cout << "Starting generating board size " << std::to_string(size) << std::endl;
-            do {
-                KakuroGenerator generator(size);
-                auto board = generator.generateBoard();
+                KakuroBoard boardTest(size, size);
+                boardTest.generateBoard();
+                std::cout << "Starting generating board size " << std::to_string(size) << std::endl;
+                do {
+                    KakuroGenerator generator(size);
+                    auto board = generator.generateBoard();
 
-                std::cout  << "Finished generating, try result" << std::endl;
+                    std::cout << "Finished generating, try result" << std::endl;
 
-                KakuroSolver solver(size);
-                std::vector <std::vector<Cell>> solution;
-                result = solver.solveBoard(board);
-                if (result == SolveResult::UNIQUE_SOLUTION) {
-                    std::string fileName = std::to_string(run)+"_board_" + std::to_string(size) +"x"+std::to_string(size)+".kakuro";
-                    std::string fileNameSol = std::to_string(run)+"_board_" + std::to_string(size) +"x"+std::to_string(size)+"_solution.kakuro";
-                    solver.writeToFile(fileName, board);
-                    solver.writeToFile(fileNameSol, solution);
-                }
-            } while (result != SolveResult::UNIQUE_SOLUTION);
-            std::cout << "Finished generating board size " << std::to_string(size) << std::endl;
+                    KakuroSolver solver(size);
+                    std::vector<std::vector<Cell>> solution;
+                    result = solver.solveBoard(board);
+                    if (result == SolveResult::UNIQUE_SOLUTION) {
+                        std::string fileName =
+                                std::to_string(run) + "_board_" + std::to_string(size) + "x" + std::to_string(size) +
+                                ".kakuro";
+                        std::string fileNameSol =
+                                std::to_string(run) + "_board_" + std::to_string(size) + "x" + std::to_string(size) +
+                                "_solution.kakuro";
+                        solver.writeToFile(fileName, board);
+                        solver.writeToFile(fileNameSol, solution);
+                    }
+                } while (result != SolveResult::UNIQUE_SOLUTION);
+                std::cout << "Finished generating board size " << std::to_string(size) << std::endl;
+            }
+        } else {
+            std::string check = argv[1];
+            //std::cin >> check;
+            std::string fileE = " ";
+            solveCreatedKakuroCheck(check, fileE);
         }
-    } else {
-        std::string check = argv[1];
-        //std::cin >> check;
-        std::string fileE = " ";
-        solveCreatedKakuroCheck(check, fileE);
+    } catch (const std::exception &e) {
+        std::cerr << e.what() << std::endl;
     }
+
 
     return 0;
 }

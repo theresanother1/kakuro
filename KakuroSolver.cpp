@@ -95,37 +95,16 @@ bool KakuroSolver::isValidInRun(const Run &run, const std::vector<int> &values) 
     return currentSum == run.sum;
 }
 
-std::vector<std::vector<int>> KakuroSolver::getPossibleValues(const Run& run) {
+std::vector<std::vector<int>> KakuroSolver::getPossibleValues(const Run &run) {
     int key = run.sum * 100 + run.length;
-    auto& combinations = sumCombinations[key];
+    auto &combinations = sumCombinations[key];
     std::vector<std::vector<int>> validCombinations;
 
-    // Filter combinations based on existing values in the run
-    for (const auto& comb : combinations) {
-        bool isValid = true;
-        size_t valueIndex = 0;
-        std::set<int> usedInRun;
-
-        for (const auto& [x, y] : run.cells) {
-            if (!board[x][y].isBlack && valueIndex < comb.size()) {
-                int value = comb[valueIndex++];
-                if (board[x][y].value != 0 && board[x][y].value != value) {
-                    isValid = false;
-                    break;
-                }
-                if (usedInRun.count(value)) {
-                    isValid = false;
-                    break;
-                }
-                usedInRun.insert(value);
-            }
-        }
-
-        if (isValid) {
+    for (const auto &comb: combinations) {
+        if (isValidInRun(run, comb)) {
             validCombinations.push_back(comb);
         }
     }
-
     return validCombinations;
 }
 
@@ -336,8 +315,9 @@ bool KakuroSolver::isValuePossibleAtPosition(int x, int y, int value) {
     return true;
 }
 
-
 SolveResult KakuroSolver::solve(int runIndex, std::vector<std::vector<Cell>> &solution) {
+    if (termination_flag && termination_flag->load()) return SolveResult::NO_SOLUTION;
+
     if (!isValidRunLengths()) {
         //std::cout << " runs not valid in length" << std::endl;
         return SolveResult::NO_SOLUTION;
@@ -427,7 +407,7 @@ SolveResult KakuroSolver::solve(int runIndex, std::vector<std::vector<Cell>> &so
         }
 
         // Backtrack
-        backtrackCount++;
+
         for (auto [x, y]: modifications) {
             board[x][y].value = 0;
         }
@@ -522,11 +502,9 @@ Cell KakuroSolver::getCell(int x, int y) {
 
 SolveResult KakuroSolver::solveBoard(std::vector<std::vector<Cell>> &solution) {
     identifyRuns();
-    //debugPrintAllRuns();
 
     // First validate the board structure before attempting to solve
     if (!isValidBoard()) {
-        //std::cout << "Invalid board structure detected\n";
         return SolveResult::INVALID_BOARD;
     }
 
@@ -535,12 +513,7 @@ SolveResult KakuroSolver::solveBoard(std::vector<std::vector<Cell>> &solution) {
         return getPossibleValues(a).size() < getPossibleValues(b).size();
     });
 
-    solutionCount = 0;
-    backtrackCount = 0;
-
-    auto result = solve(0, solution);
-
-    return result;
+    return solve(0, solution);
 }
 
 void KakuroSolver::printInitialBoard() const {

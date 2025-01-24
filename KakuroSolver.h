@@ -9,6 +9,8 @@
 #include <chrono>
 #include <fstream>
 #include <random>
+#include <atomic>
+#include <mutex>
 
 
 #ifndef PART2_KAKUROSOLVER_H
@@ -48,7 +50,7 @@ private:
     std::vector <Run> runs;
     int size;
     int solutionCount = 0;
-    long long backtrackCount = 0;
+    std::atomic<bool>* termination_flag = nullptr;
     std::unordered_map<int, std::vector<std::vector < int>>> sumCombinations;
 
 
@@ -63,7 +65,7 @@ private:
     void identifyRuns();
     bool isSolutionComplete() const;
     bool isValidBoard() const;
-    SolveResult solve(int runIndex, std::vector <std::vector<Cell>> &solution);
+    SolveResult solve(int runIndex, std::vector<std::vector<Cell>> &solution);
 
     void debugPrintRun(const Run& run) const ;
     void debugPrintAllRuns() const ;
@@ -78,17 +80,20 @@ public:
         if (!inFile) {
             throw std::runtime_error("Could not open file for reading: " + filename);
         }
+        std::cout << "REad file" << std::endl;
 
         // Read dimensions
         int rows, cols;
-        inFile >> rows >> cols;
+        inFile >> rows;
 
+        std::cout << "Read dimensions "<< rows << " x " << rows << std::endl;
         // Skip the rest of the first line
         std::string dummy;
         std::getline(inFile, dummy);
 
         KakuroSolver solver(rows);
 
+        std::cout << "REad file, initialized solver " << std::endl;
         // Read board line by line
         for (int i = 0; i < rows; ++i) {
             std::string line;
@@ -99,7 +104,7 @@ public:
             while (pos < line.length() && line[pos] == ' ') pos++;
 
             // Process each cell in the line
-            for (int j = 0; j < cols; j++) {
+            for (int j = 0; j < rows; j++) {
                 // Skip spaces between cells
                 while (pos < line.length() && line[pos] == ' ') pos++;
 
