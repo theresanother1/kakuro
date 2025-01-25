@@ -62,6 +62,7 @@ private:
     bool isValuePossibleAtPosition(int x, int y, int value);
     bool isValidInRun(const Run &run, const std::vector<int> &values);
     std::vector <std::vector<int>> getPossibleValues(const Run &run);
+    bool verifyRuns() const;
     void identifyRuns();
     bool isSolutionComplete() const;
     bool isValidBoard() const;

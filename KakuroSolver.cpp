@@ -125,7 +125,7 @@ void KakuroSolver::debugPrintAllRuns() const {
 }
 
 
-void KakuroSolver:: identifyRuns() {
+void KakuroSolver::identifyRuns() {
     runs.clear();
     //std::cout << "\nIdentifying runs...\n";
 
@@ -276,6 +276,11 @@ bool KakuroSolver::isSolutionComplete() const {
             }
         }
     }
+
+    return true;
+}
+
+bool KakuroSolver::verifyRuns() const {
     for (const auto &run: runs) {
         int sum = 0;
         std::set<int> used;
@@ -293,7 +298,6 @@ bool KakuroSolver::isSolutionComplete() const {
             return false;
         }
     }
-
     return true;
 }
 
@@ -319,29 +323,15 @@ SolveResult KakuroSolver::solve(int runIndex, std::vector<std::vector<Cell>> &so
     if (termination_flag && termination_flag->load()) return SolveResult::NO_SOLUTION;
 
     if (!isValidRunLengths()) {
-        //std::cout << " runs not valid in length" << std::endl;
+        //std::cout << " runs not valid " << std::endl;
         return SolveResult::NO_SOLUTION;
     }
 
     if (runIndex == runs.size()) {
         // Check if all cells are filled and the solution is valid
-        if (!isSolutionComplete()) {
+        if (!isSolutionComplete() || !verifyRuns()) {
             //std::cout << "Solution incomplete/unverified - not all cells filled\n";
             return SolveResult::NO_SOLUTION;
-        }
-
-        // Verify all runs
-        for (const Run &run: runs) {
-            int sum = 0;
-            for (const auto &[x, y]: run.cells) {
-                if (!board[x][y].isBlack) {
-                    sum += board[x][y].value;
-                }
-            }
-            if (sum != run.sum) {
-                //std::cout << "Run sum and sum problem" << std::endl;
-                return SolveResult::NO_SOLUTION;
-            }
         }
 
         solutionCount++;

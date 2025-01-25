@@ -1265,7 +1265,7 @@ private:
 
         // First phase: Copy complete runs from parents
         for (const auto &run: (threadRng.getReal() < 0.5 ? runs1 : runs2)) {
-            if (threadRng.getReal() < 0.5) {  // 50% chance to copy a run
+            if (threadRng.getReal() < 0.3) {  // 30% chance to copy a run
                 const auto &sourceBoard = (threadRng.getReal() < 0.5 ? parent1.board : parent2.board);
 
                 // Check if we can copy this run (no conflicts with already copied runs)
@@ -1315,7 +1315,7 @@ private:
         // random crossover operations
         for (int i = 0; i < size; ++i) {  // Skip border cells
             for (int j = 0; j < size; ++j) {  // Skip border cells
-                if (!modified[i][j] && threadRng.getReal() < 0.3) {  // 30% chance of random cell
+                if (!modified[i][j] && threadRng.getReal() < 0.4) {  // 40% chance of random cell
                     child.board[i][j] = Cell(threadRng.getReal() < 0.5);  // Random cell type
                 } else if (!modified[i][j]) {
                     child.board[i][j] = (threadRng.getReal() < 0.5) ?
@@ -1649,13 +1649,13 @@ private:
         islands.clear();
         const int islandSize = calculateAdaptivePopSize(size, 1.0) / NUM_ISLANDS;
 
+#pragma omp parallel for
         for (int i = 0; i < NUM_ISLANDS; ++i) {
             islands.emplace_back(size, islandSize, i);
             islands[i].mutationRate = mutationRate * (0.5 + (i / (NUM_ISLANDS - 1.0))) + (i * 0.02);
             islands[i].crossoverRate = 0.6 + (0.3 * i / (NUM_ISLANDS - 1.0));
 
-            std::cout << "Island " << islands[i].id << " with mutationrate " << islands[i].mutationRate
-                      << " crossover Rate " << islands[i].crossoverRate << std::endl;
+
             switch (i % 5) {
                 case 0:
                     initializeWithDensity(islands[i], 0.4);
@@ -1679,6 +1679,12 @@ private:
                     break;
             }
         }
+
+        //debug output not parallel
+        for (int i = 0; i < NUM_ISLANDS; ++i) {
+            std::cout << "Island " << islands[i].id << " with mutationrate " << islands[i].mutationRate
+                      << " crossover Rate " << islands[i].crossoverRate << std::endl;
+        }
     }
 
     static int calculateAdaptivePopSize(int boardSize, double diversity) {
@@ -1691,13 +1697,15 @@ private:
         double diversity = calculatePopulationDiversity(island.population);
         int targetSize = calculateAdaptivePopSize(size, diversity) / NUM_ISLANDS;
 
+        //fill island if necessary
         while (island.population.size() < std::max(MIN_ISLAND_SIZE, targetSize)) {
             Individual newInd = island.bestIndividual;
-            mutate(newInd, 0, 0.5, island.mutationRate);
+            heavyMutation(newInd, 0.5);
             newInd.fitness = calculateFitness(newInd);
             island.population.push_back(newInd);
         }
 
+        // remove individuals if necessary
         while (island.population.size() > targetSize) {
             auto worst = std::min_element(island.population.begin(),
                                           island.population.end(),
@@ -1950,7 +1958,8 @@ private:
 
         // Consider both fitness and diversity contribution
         double populationDiversity = calculatePopulationDiversity(island.population);
-        if (populationDiversity < 0.2) {
+
+        if (populationDiversity < MIN_DIVERSITY_THRESHOLD) {
             // Prioritize diversity
             return *std::max_element(tournament.begin(), tournament.end(),
                                      [&](const Individual &a, const Individual &b) {
@@ -1959,7 +1968,7 @@ private:
                                      });
         }
 
-        // Normal fitness-based selection
+        // fitness-based selection
         return *std::max_element(tournament.begin(), tournament.end(),
                                  [](const Individual &a, const Individual &b) {
                                      return a.fitness < b.fitness;
