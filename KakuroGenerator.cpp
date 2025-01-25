@@ -840,117 +840,6 @@ private:
 
 
     // fitness calculation helper function
-/*
-    double calculateRunQualityScore(const std::vector<std::vector<Cell>> &board) {
-        double score = 0.0;
-        int totalRuns = 0;
-        std::map<int, int> lengthFrequency;
-
-        // Analyze horizontal runs
-        for (int i = 0; i < size; ++i) {
-            for (int j = 0; j < size; ++j) {
-
-                if (board[i][j].isBlack && board[i][j].rightClue > 0) {
-                    totalRuns++;
-                    int runLength = 0;
-                    int k = j + 1;
-                    while (k < size && !board[i][k].isBlack) {
-                        runLength++;
-                        k++;
-                    }
-
-                    lengthFrequency[runLength]++;
-
-                    // Score based on run length ((2-4 cells is ideal for most puzzles, higher makes it exponentially harder)
-                    if (runLength >= 2 && runLength <= 4) {
-                        score += 1.0;  // Optimal length
-                    } else if (runLength > 4 && runLength <= 6) {
-                        score += 0.25;  // Acceptable but not ideal
-                    } else if (runLength > 6) {
-                        score -= 0.25;  // Penalize very long runs
-                    }
-
-                    // Validate and score clue values
-                    int clue = board[i][j].rightClue;
-                    int minPossible = (runLength * (runLength + 1)) / 2;
-                    int maxPossible = runLength * 9 - (runLength * (runLength - 1)) / 2;
-
-                    if (clue >= minPossible && clue <= maxPossible) {
-                        score += 0.5;
-                        // Bonus for interesting sums (not min/max)
-                        int range = maxPossible - minPossible;
-                        int margin = range / 4;
-                        if (clue > minPossible + margin && clue < maxPossible - margin) {
-                            score += 0.25;
-                        }
-                    } else {
-                        score -= 0.5;  // Penalty for invalid clues
-                    }
-                }
-            }
-        }
-
-        // Check vertical runs
-        for (int j = 0; j < size; j++) {
-            for (int i = 0; i < size; i++) {
-                if (board[i][j].isBlack && board[i][j].downClue > 0) {
-                    totalRuns++;
-                    int runLength = 0;
-                    int k = i + 1;
-                    while (k < size && !board[k][j].isBlack) {
-                        runLength++;
-                        k++;
-                    }
-
-                    lengthFrequency[runLength]++;
-
-                    if (runLength >= 2 && runLength <= 4) {
-                        score += 1.0;
-                    } else if (runLength > 4 && runLength <= 6) {
-                        score += 0.25;
-                    } else if (runLength > 6) {
-                        score -= 0.25;
-                    }
-
-                    int clue = board[i][j].downClue;
-                    int minPossible = (runLength * (runLength + 1)) / 2;
-                    int maxPossible = runLength * 9 - (runLength * (runLength - 1)) / 2;
-
-                    if (clue >= minPossible && clue <= maxPossible) {
-                        score += 0.5;
-                        int range = maxPossible - minPossible;
-                        int margin = range / 4;
-                        if (clue > minPossible + margin && clue < maxPossible - margin) {
-                            score += 0.25;
-                        }
-                    } else {
-                        score -= 0.5;
-                    }
-                }
-            }
-        }
-
-        // Penalize unbalanced run length distribution
-        if (totalRuns >= 2) {
-            int dominantLength = 0;
-            int maxFreq = 0;
-            for (const auto &[length, freq]: lengthFrequency) {
-                if (freq > maxFreq) {
-                    maxFreq = freq;
-                    dominantLength = length;
-                }
-            }
-            double ratioOfDominant = static_cast<double>(maxFreq) / totalRuns;
-            if (ratioOfDominant > 0.5) {  // If more than 50% runs are same length
-                score *= (1.0 - (ratioOfDominant - 0.5));  // Reduce score
-            }
-        }
-
-        return std::min(1.0, totalRuns > 0 ? score / totalRuns : 0.0);
-    }
-
-*/
-
     double calculateRunQualityScore(const std::vector<std::vector<Cell>>& board) {
         const int size = board.size();
         double totalScore = 0.0;
@@ -1162,126 +1051,19 @@ private:
     }
 
 
-    /*
-    double calculateFitness(Individual &individual) {
-        std::string cacheKey = getBoardHash(individual.board);
-        FitnessComponents components;
-
-        std::lock_guard<std::mutex> lock(cacheMutex);
-        auto it = fitnessCache.find(cacheKey);
-        if (it != fitnessCache.end()) {
-            return it->second;
-        }
-
-        // check basic board structure
-        double structureScore = calculateBoardStructureScore(individual.board);
-        if (structureScore < 0.4) {
-            fitnessCache[cacheKey] = structureScore * 0.2;
-            return structureScore * 0.2;
-        }
-
-        // Validate each white cell has required clues
-        for (int i = 0; i < size; i++) {
-            for (int j = 0; j < size; j++) {
-                if (!individual.board[i][j].isBlack) {
-                    bool hasHClue = false, hasVClue = false;
-
-                    // Check for horizontal clue
-                    for (int k = j - 1; k >= 0; k--) {
-                        if (individual.board[i][k].isBlack) {
-                            hasHClue = individual.board[i][k].rightClue > 0;
-                            break;
-                        }
-                    }
-
-                    // Check for vertical clue
-                    for (int k = i - 1; k >= 0; k--) {
-                        if (individual.board[k][j].isBlack) {
-                            hasVClue = individual.board[k][j].downClue > 0;
-                            break;
-                        }
-                    }
-
-                    if (!hasHClue || !hasVClue) {
-                        fitnessCache[cacheKey] = structureScore * 0.3;
-                        return structureScore * 0.3;
-                    }
-                }
-            }
-        }
-        components.basicValidity = checkBasicValidity(individual.board);
-        if (components.basicValidity < 0.3) {
-            fitnessCache[cacheKey] = components.basicValidity * 0.2;
-            return components.basicValidity * 0.2;
-        }
-
-        if (structureScore > 0.7 && components.basicValidity > 0.7) {
-            KakuroSolver solver(size);
-
-            // Copy board configuration to solver
-            for (int i = 0; i < size; ++i) {
-                for (int j = 0; j < size; ++j) {
-                    solver.setCell(i, j,
-                                   individual.board[i][j].isBlack,
-                                   individual.board[i][j].downClue,
-                                   individual.board[i][j].rightClue);
-                }
-            }
-
-
-            std::vector<std::vector<Cell>> solution;
-            SolveResult result = solveBoardWithTimeOut(solver);
-
-            switch (result) {
-                case SolveResult::INVALID_BOARD:
-                    fitnessCache[cacheKey] = structureScore * 0.4 + components.runQuality * 0.3 +
-                                             components.clueDistribution * 0.1;
-                    return structureScore * 0.4 + components.runQuality * 0.3 +
-                           components.clueDistribution * 0.1;
-                case SolveResult::UNIQUE_SOLUTION:
-                    //std::cout << "Found unique solution" << std::endl;
-                    components.solvability = 1.0;
-                    fitnessCache[cacheKey] = 1.0;
-                    return 1.0; // perfect board immediate return
-                case SolveResult::MULTIPLE_SOLUTIONS:
-                    std::cout << "1";
-                    components.solvability = 0.5;
-                    break;
-                case SolveResult::NO_SOLUTION:
-                    //std::cout << "found no solution" << std::endl;
-                    components.solvability = 0.0;
-                    break;
-            }
-        }
-
-
-        components.runQuality = calculateRunQualityScore(individual.board);
-        components.clueDistribution = calculateClueDistributionScore(individual.board);
-        fitnessCache[cacheKey] = structureScore * 0.4 +
-                                 components.runQuality * 0.3 +
-                                 components.clueDistribution * 0.1 +
-                                 components.solvability * 0.2;
-
-        // Combine components with weights
-        return structureScore * 0.4 +
-               components.runQuality * 0.3 +
-               components.clueDistribution * 0.1 +
-               components.solvability * 0.2;
-    }
-*/
-
     double calculateFitness(Individual& individual) {
-        std::string cacheKey = getBoardHash(individual.board);
+        //std::string cacheKey = getBoardHash(individual.board);
         const int size = individual.board.size();
 
         // Try cache first
-        double value = checkAndUpdateCache(cacheKey, -1.0);
-        if (value != -1) return value;
+        //double value = checkAndUpdateCache(cacheKey, -1.0);
+        //if (value != -1) return value;
 
         // Calculate structure score
         double structureScore = calculateBoardStructureScore(individual.board);
         if (structureScore < 0.4) {
-            return checkAndUpdateCache(cacheKey, structureScore * 0.2);
+           // return checkAndUpdateCache(cacheKey, structureScore * 0.2);
+            return structureScore * 0.2;
         }
 
         // Validate clues - this section is hard to parallelize due to dependencies
@@ -1320,13 +1102,15 @@ private:
         }
 
         if (!validClues) {
-            return checkAndUpdateCache(cacheKey, structureScore * 0.3);
+           // return checkAndUpdateCache(cacheKey, structureScore * 0.3);
+            return structureScore * 0.3;
         }
 
         // Check basic validity
         double basicValidity = checkBasicValidity(individual.board);
         if (basicValidity < 0.3) {
-            return checkAndUpdateCache(cacheKey, basicValidity * 0.2);
+            //return checkAndUpdateCache(cacheKey, basicValidity * 0.2);
+            return basicValidity * 0.2;
         }
 
         // Handle solver and remaining calculations
@@ -1347,7 +1131,8 @@ private:
             SolveResult result = solveBoardWithTimeOut(solver);
             switch (result) {
                 case SolveResult::UNIQUE_SOLUTION:
-                    return checkAndUpdateCache(cacheKey, 1.0);
+                    //return checkAndUpdateCache(cacheKey, 1.0);
+                    return 1.0;
                 case SolveResult::MULTIPLE_SOLUTIONS:
                     solvability = 0.5;
                     break;
@@ -1368,7 +1153,8 @@ private:
                               clueDistribution * 0.1 +
                               solvability * 0.2;
 
-        return checkAndUpdateCache(cacheKey, finalFitness);
+        //return checkAndUpdateCache(cacheKey, finalFitness);
+        return finalFitness;
     }
 
     Individual createIndividualWithBasicBoardValidity() {
@@ -2423,7 +2209,7 @@ public:
                       << " - AVG fitness " << avgFitness
                       << " - Diversity " << globalDiversity << "\n";
 
-            cleanupCache();
+            //cleanupCache();
             generation++;
         }
 
