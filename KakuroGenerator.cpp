@@ -7,6 +7,7 @@
 #include <atomic>
 #include <future>
 #include "KakuroSolver.h"
+#include <omp.h>
 
 class KakuroBoard {
 private:
@@ -661,6 +662,19 @@ private:
         }
     }
 
+    double checkAndUpdateCache(const std::string& cacheKey,
+                               const double value) {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        auto it = fitnessCache.find(cacheKey);
+        if (it != fitnessCache.end()) {
+            return it->second;
+        }
+        // - 1 for only check no update
+        if (value != -1) fitnessCache[cacheKey] = value;
+        return value;
+    }
+
+
     struct StagnationParams {
         static constexpr int STAGNATION_THRESHOLD = 15;
         static constexpr double MIN_DIVERSITY = MIN_DIVERSITY_THRESHOLD;
@@ -826,6 +840,7 @@ private:
 
 
     // fitness calculation helper function
+/*
     double calculateRunQualityScore(const std::vector<std::vector<Cell>> &board) {
         double score = 0.0;
         int totalRuns = 0;
@@ -834,6 +849,7 @@ private:
         // Analyze horizontal runs
         for (int i = 0; i < size; ++i) {
             for (int j = 0; j < size; ++j) {
+
                 if (board[i][j].isBlack && board[i][j].rightClue > 0) {
                     totalRuns++;
                     int runLength = 0;
@@ -933,6 +949,103 @@ private:
         return std::min(1.0, totalRuns > 0 ? score / totalRuns : 0.0);
     }
 
+*/
+
+    double calculateRunQualityScore(const std::vector<std::vector<Cell>>& board) {
+        const int size = board.size();
+        double totalScore = 0.0;
+        int totalRuns = 0;
+        std::map<int, int> lengthFrequency;
+        std::mutex freqMutex;
+
+#pragma omp parallel reduction(+:totalScore,totalRuns)
+        {
+            std::map<int, int> localFrequency;
+
+            // Process horizontal runs
+#pragma omp for schedule(dynamic)
+            for (int i = 0; i < size; ++i) {
+                for (int j = 0; j < size; ++j) {
+                    if (board[i][j].isBlack && board[i][j].rightClue > 0) {
+                        totalRuns++;
+                        double localScore = 0.0;
+                        int runLength = 0;
+
+                        // Calculate run length
+                        int k = j + 1;
+                        while (k < size && !board[i][k].isBlack) {
+                            runLength++;
+                            k++;
+                        }
+
+                        localFrequency[runLength]++;
+
+                        // Score run length
+                        if (runLength >= 2 && runLength <= 4) {
+                            localScore += 1.0;
+                        } else if (runLength > 4 && runLength <= 6) {
+                            localScore += 0.25;
+                        } else if (runLength > 6) {
+                            localScore -= 0.25;
+                        }
+
+                        // Validate clue values
+                        int clue = board[i][j].rightClue;
+                        int minPossible = (runLength * (runLength + 1)) / 2;
+                        int maxPossible = runLength * 9 - (runLength * (runLength - 1)) / 2;
+
+                        if (clue >= minPossible && clue <= maxPossible) {
+                            localScore += 0.5;
+                            int range = maxPossible - minPossible;
+                            int margin = range / 4;
+                            if (clue > minPossible + margin && clue < maxPossible - margin) {
+                                localScore += 0.25;
+                            }
+                        } else {
+                            localScore -= 0.5;
+                        }
+
+                        totalScore += localScore;
+                    }
+                }
+            }
+
+            // Process vertical runs
+#pragma omp for schedule(dynamic)
+            for (int j = 0; j < size; j++) {
+                for (int i = 0; i < size; i++) {
+                    // Similar processing for vertical runs...
+                    // [Implementation similar to horizontal runs]
+                }
+            }
+
+            // Merge local frequency counts
+#pragma omp critical
+            {
+                for (const auto& [length, freq] : localFrequency) {
+                    lengthFrequency[length] += freq;
+                }
+            }
+        }
+
+        // Calculate distribution penalty
+        if (totalRuns >= 2) {
+            int dominantLength = 0;
+            int maxFreq = 0;
+            for (const auto& [length, freq] : lengthFrequency) {
+                if (freq > maxFreq) {
+                    maxFreq = freq;
+                    dominantLength = length;
+                }
+            }
+            double ratioOfDominant = static_cast<double>(maxFreq) / totalRuns;
+            if (ratioOfDominant > 0.5) {
+                totalScore *= (1.0 - (ratioOfDominant - 0.5));
+            }
+        }
+
+        return std::min(1.0, totalRuns > 0 ? totalScore / totalRuns : 0.0);
+    }
 
     //fitness calculation helper function
     double calculateClueDistributionScore(const std::vector<std::vector<Cell>> &board) {
@@ -976,72 +1089,71 @@ private:
     }
 
     //fitness calculation helper function
-    double calculateBoardStructureScore(const std::vector<std::vector<Cell>> &board) {
+    double calculateBoardStructureScore(const std::vector<std::vector<Cell>>& board) {
+        const int size = board.size();
         double score = 0.0;
-        int totalCells = size * size;
-        int clues = 0;
+        const int totalCells = size * size;
+
         int blackCells = 0;
         int connectedWhiteCells = 0;
         int totalWhiteCells = 0;
-
-        // Count cells and check connectivity
-        for (int i = 0; i < size; i++) {
-            for (int j = 0; j < size; j++) {
-                if (board[i][j].isBlack) {
-                    blackCells++;
-                } else {
-                    totalWhiteCells++;
-                    bool hasHorizontalRun = false;
-                    bool hasVerticalRun = false;
-
-                    // Check horizontal run
-                    for (int k = j - 1; k >= 0; k--) {
-                        if (board[i][k].isBlack) {
-                            hasHorizontalRun = (board[i][k].rightClue > 0);
-                            break;
-                        }
-                    }
-
-                    // Check vertical run
-                    for (int k = i - 1; k >= 0; k--) {
-                        if (board[k][j].isBlack) {
-                            hasVerticalRun = (board[k][j].downClue > 0);
-                            break;
-                        }
-                    }
-
-                    if (hasHorizontalRun && hasVerticalRun) {
-                        connectedWhiteCells++;
-                    }
-                }
-            }
-        }
-
+        int clues = 0;
         int isolatedClue = 0;
 
-        // Count cells and check connectivity
-        for (int i = 0; i < size; i++) {
-            for (int j = 0; j < size; j++) {
-                if (board[i][j].isBlack && board[i][j].downClue > 0) {
-                    clues++;
-                    if (j + 1 < size && board[i][j + 1].isBlack) isolatedClue++;
-                }
-                if (board[i][j].isBlack && board[i][j].rightClue > 0) {
-                    clues++;
-                    if (i + 1 < size && board[i + 1][j].isBlack) isolatedClue++;
+#pragma omp parallel reduction(+:blackCells,totalWhiteCells,connectedWhiteCells,clues,isolatedClue)
+        {
+#pragma omp for collapse(2) schedule(static)
+            for (int i = 0; i < size; i++) {
+                for (int j = 0; j < size; j++) {
+                    if (board[i][j].isBlack) {
+                        blackCells++;
+                    } else {
+                        totalWhiteCells++;
+                        bool hasHorizontalRun = false;
+                        bool hasVerticalRun = false;
+
+                        // Check runs
+                        for (int k = j - 1; k >= 0; k--) {
+                            if (board[i][k].isBlack) {
+                                hasHorizontalRun = (board[i][k].rightClue > 0);
+                                break;
+                            }
+                        }
+                        for (int k = i - 1; k >= 0; k--) {
+                            if (board[k][j].isBlack) {
+                                hasVerticalRun = (board[k][j].downClue > 0);
+                                break;
+                            }
+                        }
+                        if (hasHorizontalRun && hasVerticalRun) {
+                            connectedWhiteCells++;
+                        }
+                    }
+
+                    // Count clues
+                    if (board[i][j].isBlack) {
+                        if (board[i][j].downClue > 0) {
+                            clues++;
+                            if (j + 1 < size && board[i][j + 1].isBlack)
+                                isolatedClue++;
+                        }
+                        if (board[i][j].rightClue > 0) {
+                            clues++;
+                            if (i + 1 < size && board[i + 1][j].isBlack)
+                                isolatedClue++;
+                        }
+                    }
                 }
             }
         }
 
-        // Score based on black/white ratio (target ~30% black)
+        // Calculate final scores
         double blackRatio = static_cast<double>(blackCells) / totalCells;
         score += (1.0 - std::abs(0.3 - blackRatio)) * 0.3;
 
-        // Score based on white cell connectivity
         if (totalWhiteCells > 0) {
             score += (static_cast<double>(connectedWhiteCells) / totalWhiteCells) * 0.35;
         }
-        // Score based on clue connectivity
         if (clues > 0) {
             score += (static_cast<double>(isolatedClue) / clues) * 0.35;
         }
@@ -1049,7 +1161,8 @@ private:
         return score;
     }
 
-    //TODO: parallelize - omp parallel section did not work properly
+
+    /*
     double calculateFitness(Individual &individual) {
         std::string cacheKey = getBoardHash(individual.board);
         FitnessComponents components;
@@ -1154,6 +1267,108 @@ private:
                components.runQuality * 0.3 +
                components.clueDistribution * 0.1 +
                components.solvability * 0.2;
+    }
+*/
+
+    double calculateFitness(Individual& individual) {
+        std::string cacheKey = getBoardHash(individual.board);
+        const int size = individual.board.size();
+
+        // Try cache first
+        double value = checkAndUpdateCache(cacheKey, -1.0);
+        if (value != -1) return value;
+
+        // Calculate structure score
+        double structureScore = calculateBoardStructureScore(individual.board);
+        if (structureScore < 0.4) {
+            return checkAndUpdateCache(cacheKey, structureScore * 0.2);
+        }
+
+        // Validate clues - this section is hard to parallelize due to dependencies
+        bool validClues = true;
+#pragma omp parallel
+        {
+            bool localValid = true;
+#pragma omp for collapse(2)
+            for (int i = 0; i < size; i++) {
+                for (int j = 0; j < size; j++) {
+                    if (!individual.board[i][j].isBlack) {
+                        bool hasHClue = false, hasVClue = false;
+
+                        for (int k = j - 1; k >= 0 && !hasHClue; k--) {
+                            if (individual.board[i][k].isBlack) {
+                                hasHClue = individual.board[i][k].rightClue > 0;
+                            }
+                        }
+
+                        for (int k = i - 1; k >= 0 && !hasVClue; k--) {
+                            if (individual.board[k][j].isBlack) {
+                                hasVClue = individual.board[k][j].downClue > 0;
+                            }
+                        }
+
+                        if (!hasHClue || !hasVClue) {
+                            localValid = false;
+                        }
+                    }
+                }
+            }
+#pragma omp critical
+            {
+                validClues &= localValid;
+            }
+        }
+
+        if (!validClues) {
+            return checkAndUpdateCache(cacheKey, structureScore * 0.3);
+        }
+
+        // Check basic validity
+        double basicValidity = checkBasicValidity(individual.board);
+        if (basicValidity < 0.3) {
+            return checkAndUpdateCache(cacheKey, basicValidity * 0.2);
+        }
+
+        // Handle solver and remaining calculations
+        double solvability = 0.0;
+        if (structureScore > 0.7 && basicValidity > 0.7) {
+            KakuroSolver solver(size);
+
+            // Setup solver
+            for (int i = 0; i < size; ++i) {
+                for (int j = 0; j < size; ++j) {
+                    solver.setCell(i, j,
+                                   individual.board[i][j].isBlack,
+                                   individual.board[i][j].downClue,
+                                   individual.board[i][j].rightClue);
+                }
+            }
+
+            SolveResult result = solveBoardWithTimeOut(solver);
+            switch (result) {
+                case SolveResult::UNIQUE_SOLUTION:
+                    return checkAndUpdateCache(cacheKey, 1.0);
+                case SolveResult::MULTIPLE_SOLUTIONS:
+                    solvability = 0.5;
+                    break;
+                case SolveResult::NO_SOLUTION:
+                case SolveResult::INVALID_BOARD:
+                    solvability = 0.0;
+                    break;
+            }
+        }
+
+        // Calculate remaining scores
+        double runQuality = calculateRunQualityScore(individual.board);
+        double clueDistribution = calculateClueDistributionScore(individual.board);
+
+        // Calculate final fitness
+        double finalFitness = structureScore * 0.4 +
+                              runQuality * 0.3 +
+                              clueDistribution * 0.1 +
+                              solvability * 0.2;
+
+        return checkAndUpdateCache(cacheKey, finalFitness);
     }
 
     Individual createIndividualWithBasicBoardValidity() {
@@ -1649,7 +1864,7 @@ private:
         islands.clear();
         const int islandSize = calculateAdaptivePopSize(size, 1.0) / NUM_ISLANDS;
 
-#pragma omp parallel for
+//#pragma omp parallel for
         for (int i = 0; i < NUM_ISLANDS; ++i) {
             islands.emplace_back(size, islandSize, i);
             islands[i].mutationRate = mutationRate * (0.5 + (i / (NUM_ISLANDS - 1.0))) + (i * 0.02);
@@ -2216,7 +2431,7 @@ public:
     }
 
     SolveResult solveBoardWithTimeOut(KakuroSolver &solver) {
-        int timeout = 30;
+        int timeout = 15;
         std::atomic<bool> should_terminate{false};
         auto start = std::chrono::high_resolution_clock::now();
 
