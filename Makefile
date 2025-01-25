@@ -2,6 +2,9 @@ CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Wextra -O3 -fopenmp
 LDFLAGS = -lgomp
 
+# get debug output if executable fails silently
+CXXFLAGS += -g -fno-omit-frame-pointer -D_GLIBCXX_DEBUG
+
 SRC =  kakuro_main.cpp
 OBJ = $(SRC:.cpp=.o)
 EXEC = kakuro

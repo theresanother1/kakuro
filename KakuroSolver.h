@@ -43,6 +43,11 @@ enum class SolveResult {
     MULTIPLE_SOLUTIONS
 };
 
+struct SolveTask {
+    int runIndex;
+    std::vector<std::vector<Cell>> board;
+    std::vector<std::pair<int, int>> modifications;
+};
 
 class KakuroSolver {
 private:
@@ -74,6 +79,7 @@ private:
 public:
     KakuroSolver(int boardSize);
 
+    void initializeBoard(const std::vector<std::vector<Cell>> &newBoard);
     void writeToFile(const std::string &filename, std::vector<std::vector<Cell>> solution) const;
 
     static KakuroSolver readFromFile(const std::string &filename) {

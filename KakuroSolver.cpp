@@ -1,4 +1,6 @@
 #include "KakuroSolver.h"
+#include <queue>
+#include <atomic>
 
 void KakuroSolver::precomputeSumCombinations() {
     // Initialize min/max sums for quick lookup
@@ -95,14 +97,24 @@ bool KakuroSolver::isValidInRun(const Run &run, const std::vector<int> &values) 
     return currentSum == run.sum;
 }
 
-std::vector<std::vector<int>> KakuroSolver::getPossibleValues(const Run &run) {
+std::vector<std::vector<int>> KakuroSolver::getPossibleValues(const Run& run) {
     int key = run.sum * 100 + run.length;
-    auto &combinations = sumCombinations[key];
     std::vector<std::vector<int>> validCombinations;
 
-    for (const auto &comb: combinations) {
-        if (isValidInRun(run, comb)) {
-            validCombinations.push_back(comb);
+#pragma omp parallel
+    {
+        std::vector<std::vector<int>> localValid;
+#pragma omp for schedule(dynamic)
+        for (const auto& comb : sumCombinations[key]) {
+            if (isValidInRun(run, comb)) {
+                localValid.push_back(comb);
+            }
+        }
+
+#pragma omp critical(combine_valid)
+        {
+            validCombinations.insert(validCombinations.end(),
+                                     localValid.begin(), localValid.end());
         }
     }
     return validCombinations;
@@ -144,13 +156,6 @@ void KakuroSolver::identifyRuns() {
                 run.isHorizontal = true;
                 if (run.length >= 2) {
                     runs.push_back(run);
-                    /*std::cout << "Found horizontal run at (" << i << "," << j
-                              << ") sum=" << run.sum << " length=" << run.length
-                              << " cells: ";
-                    for (const auto &cell: run.cells) {
-                        std::cout << "(" << cell.first << "," << cell.second << ") ";
-                    }
-                    std::cout << "\n";*/
                 }
             }
         }
@@ -171,13 +176,6 @@ void KakuroSolver::identifyRuns() {
                 run.isHorizontal = false;
                 if (run.length >= 2) {
                     runs.push_back(run);
-                    /*std::cout << "Found vertical run at (" << i << "," << j
-                              << ") sum=" << run.sum << " length=" << run.length
-                              << " cells: ";
-                    for (const auto &cell: run.cells) {
-                        std::cout << "(" << cell.first << "," << cell.second << ") ";
-                    }
-                    std::cout << "\n";*/
                 }
             }
         }
@@ -225,9 +223,6 @@ bool KakuroSolver::isValidBoard() const {
                 }
 
                 if (!hasHorizontalClue || !hasVerticalClue) {
-                    /*std::cout << "Cell at (" << i << "," << j << " value: " << board[i][j].value
-                              << ") missing clue(s). Horizontal: " << hasHorizontalClue
-                              << ", Vertical: " << hasVerticalClue << std::endl;*/
                     return false;
                 }
             }
@@ -255,8 +250,6 @@ bool KakuroSolver::isValidBoard() const {
         for (int j = 0; j < size; j++) {
             if (!board[i][j].isBlack) {
                 if (!cellInRun[i][j].first || !cellInRun[i][j].second) {
-                    /*std::cout << "Cell at (" << i << "," << j << " value: " << board[i][j].value
-                                << ") not part of both horizontal and vertical runs" << std::endl;*/
                     return false;
                 }
             }
@@ -267,176 +260,208 @@ bool KakuroSolver::isValidBoard() const {
 }
 
 bool KakuroSolver::isSolutionComplete() const {
-    // Check if all white cells have values
+    bool isComplete = true;
+#pragma omp parallel for collapse(2) reduction(&:isComplete)
     for (int i = 0; i < size; i++) {
         for (int j = 0; j < size; j++) {
             if (!board[i][j].isBlack && board[i][j].value == 0) {
-                /*std::cout << "Unfilled cell at (" << i << "," << j << ")" << std::endl;*/
-                return false;
+                isComplete = false;
             }
         }
     }
-
-    return true;
+    return isComplete;
 }
 
 bool KakuroSolver::verifyRuns() const {
-    for (const auto &run: runs) {
+    bool isValid = true;
+#pragma omp parallel for reduction(&:isValid)
+    for (const auto& run : runs) {
         int sum = 0;
         std::set<int> used;
-        for (const auto &[x, y]: run.cells) {
+        for (const auto& [x, y] : run.cells) {
             if (!board[x][y].isBlack) {
                 int value = board[x][y].value;
-                if (value < 1 || value > 9 || used.count(value)) {
-                    return false;
+#pragma omp critical(verify)
+                {
+                    if (value < 1 || value > 9 || used.count(value)) {
+                        isValid = false;
+                    }
+                    used.insert(value);
                 }
-                used.insert(value);
                 sum += value;
             }
         }
-        if (sum != run.sum) {
-            return false;
-        }
+        isValid &= (sum == run.sum);
     }
-    return true;
+    return isValid;
 }
+
 
 bool KakuroSolver::isValuePossibleAtPosition(int x, int y, int value) {
     // Check row constraints
-    for (int j = 0; j < size; j++) {
-        if (j != y && !board[x][j].isBlack && board[x][j].value == value) {
+    for (int j = 0; j < size; ++j) {
+        if (j != y && !board[x][j].isBlack && board[x][j].value == value ||
+        j != x && !board[j][y].isBlack && board[j][y].value == value) {
             return false;
         }
     }
-
-    // Check column constraints
-    for (int i = 0; i < size; i++) {
-        if (i != x && !board[i][y].isBlack && board[i][y].value == value) {
-            return false;
-        }
-    }
-
     return true;
 }
 
-SolveResult KakuroSolver::solve(int runIndex, std::vector<std::vector<Cell>> &solution) {
+SolveResult KakuroSolver::solve(int runIndex, std::vector<std::vector<Cell>>& solution) {
     if (termination_flag && termination_flag->load()) return SolveResult::NO_SOLUTION;
-
-    if (!isValidRunLengths()) {
-        //std::cout << " runs not valid " << std::endl;
-        return SolveResult::NO_SOLUTION;
-    }
+    if (!isValidRunLengths()) return SolveResult::NO_SOLUTION;
 
     if (runIndex == runs.size()) {
-        // Check if all cells are filled and the solution is valid
-        if (!isSolutionComplete() || !verifyRuns()) {
-            //std::cout << "Solution incomplete/unverified - not all cells filled\n";
-            return SolveResult::NO_SOLUTION;
-        }
+        if (!isSolutionComplete() || !verifyRuns()) return SolveResult::NO_SOLUTION;
 
+#pragma omp atomic
         solutionCount++;
-        //std::cout << "\nFound solution #" << solutionCount << ":\n";
-        //printBoard();
 
         if (solutionCount == 1) {
-            return SolveResult::UNIQUE_SOLUTION;  // Keep searching to verify uniqueness
+#pragma omp critical
+            {
+                solution = board;
+            }
+            return SolveResult::UNIQUE_SOLUTION;
         }
-        return SolveResult::MULTIPLE_SOLUTIONS;  // Found more than one solution
+        return SolveResult::MULTIPLE_SOLUTIONS;
     }
 
-    const Run &run = runs[runIndex];
-    auto possibleValues = getPossibleValues(run);
+    std::vector<std::vector<int>> possibleValues;
+#pragma omp critical
+    {
+        const Run& run = runs[runIndex];
+        possibleValues = getPossibleValues(run);
+    }
 
-    // Sort combinations by how many cells they can fill immediately
-    std::sort(possibleValues.begin(), possibleValues.end(),
-              [this, &run](const std::vector<int>& a, const std::vector<int>& b) {
-                  int scoreA = 0, scoreB = 0;
-                  for (size_t i = 0; i < run.cells.size(); i++) {
-                      const auto& [x, y] = run.cells[i];
-                      if (board[x][y].value == 0) {
-                          if (isValuePossibleAtPosition(x, y, a[i])) scoreA++;
-                          if (isValuePossibleAtPosition(x, y, b[i])) scoreB++;
-                      }
-                  }
-                  return scoreA > scoreB;
-              });
+    SolveResult result = SolveResult::NO_SOLUTION;
 
+    if (possibleValues.size() > 8 && runIndex < runs.size() / 2) {
+        auto localBoard = board;
 
-    for (const auto &values: possibleValues) {
-        bool isValid = true;
-        std::vector<std::pair<int, int>> modifications;
+#pragma omp parallel for schedule(dynamic) shared(result)
+        for (size_t i = 0; i < possibleValues.size(); i++) {
+            if (solutionCount > 1) continue;
 
-        // Try placing values
-        size_t valueIndex = 0;
-        for (size_t i = 0; i < run.cells.size() && valueIndex < values.size(); i++) {
-            auto [x, y] = run.cells[i];
-            if (!board[x][y].isBlack) {
-                int value = values[valueIndex++];
+            std::vector<int> values;
+#pragma omp critical
+            {
+                if (i < possibleValues.size()) {
+                    values = possibleValues[i];
+                }
+            }
 
-                // Check if cell already has a different value
-                if (board[x][y].value != 0 && board[x][y].value != value) {
-                    isValid = false;
+            if (values.empty()) continue;
+
+            auto threadBoard = localBoard;
+            bool isValid = true;
+            std::vector<std::pair<int, int>> modifications;
+
+#pragma omp critical
+            {
+                const Run& run = runs[runIndex];
+                size_t valueIndex = 0;
+                for (size_t j = 0; j < run.cells.size() && valueIndex < values.size(); j++) {
+                    auto [x, y] = run.cells[j];
+                    if (!threadBoard[x][y].isBlack) {
+                        int value = values[valueIndex++];
+                        if (threadBoard[x][y].value != 0 && threadBoard[x][y].value != value) {
+                            isValid = false;
+                            break;
+                        }
+                        if (threadBoard[x][y].value == 0) {
+                            threadBoard[x][y].value = value;
+                            modifications.push_back({x, y});
+                        }
+                    }
+                }
+            }
+
+            if (isValid) {
+#pragma omp critical
+                {
+                    board = threadBoard;
+                }
+
+                auto subResult = solve(runIndex + 1, solution);
+
+#pragma omp critical
+                {
+                    if (subResult == SolveResult::MULTIPLE_SOLUTIONS) {
+                        result = SolveResult::MULTIPLE_SOLUTIONS;
+                    } else if (subResult == SolveResult::UNIQUE_SOLUTION && result != SolveResult::MULTIPLE_SOLUTIONS) {
+                        result = SolveResult::UNIQUE_SOLUTION;
+                    }
+
+                    for (auto [x, y] : modifications) {
+                        board[x][y].value = 0;
+                    }
+                }
+            }
+        }
+    } else {
+        const Run &run = runs[runIndex];
+        for (const auto& values : possibleValues) {
+
+            if (solutionCount > 1) break;
+            bool isValid = true;
+            std::vector<std::pair<int, int>> modifications;
+
+            size_t valueIndex = 0;
+            for (size_t i = 0; i < run.cells.size() && valueIndex < values.size(); i++) {
+                auto [x, y] = run.cells[i];
+                if (!board[x][y].isBlack) {
+                    int value = values[valueIndex++];
+                    if (board[x][y].value != 0 && board[x][y].value != value) {
+                        isValid = false;
+                        break;
+                    }
+                    if (board[x][y].value == 0) {
+                        board[x][y].value = value;
+                        modifications.push_back({x, y});
+                    }
+                }
+            }
+
+            if (isValid) {
+                auto subResult = solve(runIndex + 1, solution);
+                if (subResult == SolveResult::MULTIPLE_SOLUTIONS) {
+                    result = SolveResult::MULTIPLE_SOLUTIONS;
                     break;
                 }
-
-                if (board[x][y].value == 0) {
-                    board[x][y].value = value;
-                    modifications.push_back({x, y});
+                if (subResult == SolveResult::UNIQUE_SOLUTION) {
+                    result = SolveResult::UNIQUE_SOLUTION;
                 }
             }
-        }
 
-        if (isValid) {
-            auto result = solve(runIndex + 1, solution);
-            if (result == SolveResult::MULTIPLE_SOLUTIONS) {
-                return SolveResult::MULTIPLE_SOLUTIONS;  // Propagate multiple solutions immediately
+            for (auto [x, y] : modifications) {
+                board[x][y].value = 0;
             }
-            if (result == SolveResult::UNIQUE_SOLUTION && solutionCount > 1) {
-                return SolveResult::MULTIPLE_SOLUTIONS;  // Found another solution
-            }
-        }
-
-        // Backtrack
-
-        for (auto [x, y]: modifications) {
-            board[x][y].value = 0;
         }
     }
 
-    if (solutionCount == 1) {
-        return SolveResult::UNIQUE_SOLUTION;
-    } else if (solutionCount > 1) {
-        return SolveResult::MULTIPLE_SOLUTIONS;
-    } else {
-        //std::cout << "no result at end " << solutionCount << std::endl;
-        //printBoard();
-        return SolveResult::NO_SOLUTION;
-    }
+    return result;
 }
 
 bool KakuroSolver::isValidRunLengths() const {
-    for (const Run &run: runs) {
-        // Count non-black cells in the run
+    bool isValid = true;
+#pragma omp parallel for reduction(&:isValid)
+    for (const Run& run : runs) {
         int whiteCells = 0;
-        for (const auto &[x, y]: run.cells) {
-            if (!board[x][y].isBlack) {
-                whiteCells++;
-            }
+        for (const auto& [x, y] : run.cells) {
+            if (!board[x][y].isBlack) whiteCells++;
         }
-
-        // Each run must have at least 2 white cells
-        if (whiteCells < 2) {
-            return false;
-        }
+        isValid &= (whiteCells >= 2);
     }
-    return true;
+    return isValid;
 }
+
 
 KakuroSolver::KakuroSolver(int boardSize) : size(boardSize) {
     // Initialize all cells as black by default
     board = std::vector<std::vector<Cell>>(size, std::vector<Cell>(size, Cell(true)));
     precomputeSumCombinations();
-    //std::cout << "Board initialized\n";
 }
 
 void KakuroSolver::writeToFile(const std::string &filename, std::vector<std::vector<Cell>> solution) const {
@@ -509,5 +534,16 @@ SolveResult KakuroSolver::solveBoard(std::vector<std::vector<Cell>> &solution) {
 void KakuroSolver::printInitialBoard() const {
     std::cout << "\nInitial board configuration:\n";
     printBoard();
+}
+
+void KakuroSolver::initializeBoard(const std::vector<std::vector<Cell>> &newBoard) {
+    for (int i = 0; i < size; ++i) {
+        for (int j = 0; j < size; ++j) {
+            this->setCell(i, j,
+                           newBoard[i][j].isBlack,
+                           newBoard[i][j].downClue,
+                           newBoard[i][j].rightClue);
+        }
+    }
 }
 
